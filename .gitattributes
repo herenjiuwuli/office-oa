@@ -1,0 +1,22 @@
+# 统一行尾：仓库与所有平台检出都用 LF
+# （不加这条，Windows 上 git 会把 LF 转 CRLF，导致「整个文件被改动」的假 diff）
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.pdf binary
+
+# 锁文件在 merge 时容易冲突，且不需要人工看 diff
+package-lock.json -diff linguist-generated
+web/package-lock.json -diff linguist-generated
+
+# 让 GitHub 语言统计别把 .vue 之外的东西算进来
+*.md linguist-documentation

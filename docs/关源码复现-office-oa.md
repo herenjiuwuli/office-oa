@@ -1,0 +1,65 @@
+# 关掉源码，你能写出来吗？（office-oa 复现练习）
+
+> 衡量标准（你定的）：关掉源码能自己写出来 = 懂；写不出 = 没懂。
+> 方法（拆解循环）：① 跑起来当使用者 → ② 三问拆（**干嘛 / 为什么 / 删了会怎样**）→ ③ 关源码重写 → ④ diff 对照 → 差距记错题本。
+>
+> ⚠️ 说明：这个项目是「你定需求 + AI 实现」协作产出。所以这份练习的**唯一目的**就是把「AI 写的」变成「你能讲的」。练完 9 题，这个项目才敢往简历上写。
+
+## 练习清单（每题：关掉源码，在空白编辑器/纸上写，再对照真实代码 diff）
+
+1. **状态机**：画出 `requests.status` 的全部流转（`draft / pending / approved / rejected / cancelled`），标出「哪个状态能提交、哪个能撤回、哪个是终态」，以及驳回重提时 `round` 怎么变。
+   → 对照 `server/flow/engine.js` 顶部 `SUBMITTABLE` / `CANCELLABLE` + README「状态机」一节。
+
+2. **⭐⭐ 审批引擎六步**：白纸写出 `actOnRequest()` 的六步**顺序**，并说出「为什么必须是这个顺序」。
+   → 对照 `server/flow/engine.js` 的 `actOnRequest()`（本项目最核心的一道题，**答不出来就等于这项目没懂**）。
+
+3. **流程快照**：写出 `submitRequest()` 里快照存了哪些字段、为什么审批时**不重新查流程模板**。
+   → 对照 `submitRequest()` 的 `snapshot` 构造 + `parseSnapshot()`。
+
+4. **并发防线**：写出防并发那一句 SQL，以及为什么用 `changes` 而不是应用层加锁。
+   → 对照 `actOnRequest()` 第 ④ 步。
+
+5. **鉴权**：写出 `signToken` / `verifyToken` 的 HS256 流程（含防时序、`exp` 校验），以及密码为什么用 `scrypt` + 加盐。
+   → 对照 `server/auth.js`（纯函数，不碰库）。
+
+6. **权限模型**：写出 `guards.js` 每一层做了什么、为什么权限**不缓存进 token**。
+   → 对照 `server/guards.js` + `server/permissions.js`。
+
+7. **横向越权防线**：写出 `canViewRequest()` 的三个放行条件，并说明「三个都不满足返回什么码、为什么」。
+   → 对照 `server/flow/engine.js` 的 `canViewRequest()`。
+
+8. **审批人解析**：写出 `resolveApprovers()` 的 3 个分支（`user` / `role` / `manager`），并解释为什么解析失败**必须抛 409 而不是 500**。
+   → 对照 `resolveApprovers()`（注意 `manager` 分支里「上级为空」那段注释）。
+
+9. **或签 / 会签结算**：写出「本步是否通过」的判定表达式，以及驳回后为什么要 `closeRemainingTasks()`。
+   → 对照 `actOnRequest()` 第 ⑤ 步的 `passed` 表达式。
+
+## 我的示范轮（以第 2 题为例）
+
+> 我做给你看「能写出来长什么样」。下面是**标准答案**（可直接拿去跟你的默写做 diff）：
+
+`actOnRequest(requestId, userId, action, comment)` —— action 只允许 `approve` / `reject`：
+
+| 步 | 做什么 | 失败码 | 为什么在这一步 |
+|---|---|---|---|
+| ① | **授权**：①-1 申请人不能审自己的单（防自批）；①-2 你至少是这张单某个环节的审批人 | 403 | **必须最先做** —— 先返 409 会让无关人员靠状态码探测单据状态（信息泄漏） |
+| ② | **状态校验**：`status !== 'pending'` → 拒 | 409 | 授权已过，这里才谈「现在能不能审」 |
+| ③ | **身份细分**：查 `approval_tasks(request_id, step_no=current_step, round, approver_id)`，查不到 → 拒 | 403 | 「是审批人」≠「是**这一步**的审批人」 |
+| ④ | **条件更新**：`UPDATE ... WHERE id = ? AND action IS NULL`，`changes === 0` → 拒 | 409 | ★ 并发防线，靠 DB 原子性 |
+| ⑤ | **结算该步**：`passed = !hasReject && (mode === 'any' ? anyApprove : allDone)` | — | 或签 vs 会签的分岔点 |
+| ⑥ | **推进 or 归档**：有 `reject` → 驳回 + 关掉本步剩余任务；`passed` → 有下一步则推进 `current_step` + 分配任务，没有则 `approved` 归档；`passed === false`（会签没集齐）→ **什么都不做，保持 pending** | — | 全部包在一个事务里，配置错误 → ROLLBACK，不留半截状态 |
+
+对照真实代码（`server/flow/engine.js`）：**一致 ✅**。说明这题能写出来，面试可放心讲。
+
+## 评分标准
+
+- 每题：能独立写出核心逻辑 = ✅；卡住或写错 = ❌，回到对应源码重读 + 记错题本。
+- **第 2 题（六步）是硬门槛**：这题 ❌ 就别把 OA 写进简历的技术亮点里，先补。
+- 9 题全 ✅ → 这个项目你敢讲、扛得住深挖，可以投技术岗。
+- 有 ❌ → 先补那一块，别急着投。
+
+## 错题本模板
+
+| 题号 | 我写错的 / 卡住的 | 正确做法 | 下次怎么记住 |
+|---|---|---|---|
+| | | | |

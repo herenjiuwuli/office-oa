@@ -1,0 +1,53 @@
+name: CI
+
+# M2：把三层测试接进 CI 做回归
+#   ① 静态扫描（前端未声明标识符等 —— 拦「build 过但运行时 ReferenceError」）
+#   ② 接口测试（vitest，84 条：鉴权 / 权限 / 审批流 / 状态机）
+#   ③ UI 测试（Playwright，跑一整条 提交 → 两级审批 → 归档 + 驳回重提）
+#
+# ⭐ 不下载浏览器：Playwright 配了 channel: 'chrome'，用 GitHub runner
+#    （ubuntu-latest 镜像自带 Google Chrome stable）已装的 Chrome，省掉几百 MB 下载。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 装依赖（根目录 + web 各自一份）
+        run: |
+          npm ci
+          npm --prefix web ci
+
+      - name: ① 静态扫描（前端）
+        run: npm run check:frontend
+
+      - name: 构建前端产物（后端要托管 web/dist）
+        run: npm run build
+
+      - name: ② 接口测试（vitest）
+        run: npm test
+
+      - name: ③ UI 测试（Playwright，用系统 Chrome）
+        run: npm run test:e2e
+
+      - name: 失败时上传 Playwright 报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
