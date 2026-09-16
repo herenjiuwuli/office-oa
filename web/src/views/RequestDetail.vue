@@ -39,8 +39,6 @@ async function load() {
   }
 }
 
-onMounted(load)
-
 // --- 我是谁、我能做什么 ---
 const isApplicant = computed(() => !!detail.value && detail.value.applicantId === me.value?.id)
 const canSubmit = computed(
@@ -153,6 +151,48 @@ const formFields = computed(() => Object.keys(detail.value?.formData || {}))
 const statusInfo = computed(() =>
   detail.value ? { text: statusText(detail.value.status), cls: statusCls(detail.value.status) } : null,
 )
+
+// --- AI 摘要（M2，可选能力）---
+// 三条前端约定：
+//   1. AI 关闭 / 失败都是【正常状态】，不是报错 —— 所以降级用 alert-warn 展示，不用红色错误块
+//   2. 结果旁边永远写着「以原始表单为准」—— 模型输出是展示物，不是事实
+//   3. 按钮在没配置时就置灰，别让用户白点一次
+const aiEnabled = ref(false)
+const aiHint = ref('')
+const aiBusy = ref(false)
+const aiResult = ref(null)
+const aiError = ref('')
+
+async function loadAiStatus() {
+  try {
+    const s = await api.ai.status()
+    aiEnabled.value = !!s.enabled
+    aiHint.value = s.reason || ''
+  } catch {
+    // 拿不到状态就当没启用：AI 是可选能力，不该影响主流程
+    aiEnabled.value = false
+    aiHint.value = '无法获取 AI 状态'
+  }
+}
+
+async function genSummary() {
+  aiBusy.value = true
+  aiError.value = ''
+  try {
+    aiResult.value = await api.ai.summarize(id.value)
+  } catch (e) {
+    // 走到这里说明连 HTTP 都失败了（网络/越权/404），跟「AI 服务不可用」是两件事
+    aiError.value = e.message
+    aiResult.value = null
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+onMounted(() => {
+  load()
+  loadAiStatus()
+})
 </script>
 
 <template>
@@ -244,6 +284,66 @@ const statusInfo = computed(() =>
             <textarea v-model="comment" placeholder="如：已核对活动预算"></textarea>
           </div>
         </div>
+      </div>
+
+      <!-- AI 审批摘要（M2，可选能力）。
+           它存在的意义只有一个：让审批人不用逐字读表单就能抓到重点。
+           注意它的三条产品边界 —— 只读、只展示、失败即降级（后端已保证，前端负责如实呈现）。 -->
+      <div class="card">
+        <div class="card-title">
+          <span>AI 审批摘要</span>
+          <span class="hint">AI 生成，仅供参考；请以下方「表单内容」为准</span>
+        </div>
+
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+          <button class="btn" :disabled="aiBusy || !aiEnabled" @click="genSummary">
+            {{ aiBusy ? '生成中…' : aiResult?.available ? '重新生成' : '生成摘要' }}
+          </button>
+          <span v-if="!aiEnabled" class="t-muted" style="font-size: 12.5px">
+            未启用{{ aiHint ? '：' + aiHint : '' }}
+          </span>
+          <span v-else-if="aiResult?.available" class="t-muted" style="font-size: 12px">
+            模型 {{ aiResult.model }}
+            <template v-if="aiResult.usage?.promptTokens !== null">
+              · 用量 {{ aiResult.usage.promptTokens }}+{{ aiResult.usage.completionTokens }} tokens
+            </template>
+          </span>
+        </div>
+
+        <div v-if="aiError" class="alert alert-error" style="margin-top: 10px; margin-bottom: 0">
+          {{ aiError }}
+        </div>
+
+        <!-- 降级：AI 挂了是【正常状态】，不是错误页 —— 所以用 warn 而不是 error，
+             并且明确告诉用户「不影响审批」，避免他以为系统坏了。 -->
+        <div
+          v-else-if="aiResult && !aiResult.available"
+          class="alert alert-warn"
+          style="margin-top: 10px; margin-bottom: 0"
+        >
+          AI 摘要暂时不可用：{{ aiResult.reason }}
+          <div class="t-muted" style="font-size: 12.5px; margin-top: 4px">
+            这不影响单据本身和审批操作，直接看下方的「表单内容」即可。
+          </div>
+        </div>
+
+        <template v-else-if="aiResult?.available">
+          <ul style="margin: 10px 0 0; padding-left: 20px; font-size: 13.5px; line-height: 1.9">
+            <li v-for="(p, i) in aiResult.points" :key="'ai-p' + i">{{ p }}</li>
+          </ul>
+
+          <div v-if="aiResult.risks && aiResult.risks.length" class="alert alert-warn" style="margin: 10px 0 0">
+            <b>需要留意</b>
+            <ul style="margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.8">
+              <li v-for="(r, i) in aiResult.risks" :key="'ai-r' + i">{{ r }}</li>
+            </ul>
+          </div>
+
+          <div class="t-muted" style="font-size: 12px; margin-top: 10px">
+            AI 只做归纳，不参与审批判断 —— 它在系统里没有任何修改单据状态的能力。
+            <template v-if="myTask"> 审批前请核对下方的原始表单。</template>
+          </div>
+        </template>
       </div>
 
       <div class="two-col">

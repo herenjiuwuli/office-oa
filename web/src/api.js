@@ -81,6 +81,14 @@ export const api = {
   // --- 待办 ---
   todo: () => request('/todo'),
 
+  // --- AI 摘要（可选能力）---
+  // 注意：未配置 key / AI 挂了都不算「错误」——后端会返回 200 + available:false，
+  // 所以这里的 summarize 正常情况下不会抛异常，前端按 available 分支渲染即可。
+  ai: {
+    status: () => request('/ai/status'),
+    summarize: (id) => request(`/requests/${id}/ai-summary`, { method: 'POST', body: {} }),
+  },
+
   // --- 公告 ---
   announcements: {
     list: () => request('/announcements'),

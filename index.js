@@ -16,6 +16,7 @@ import requestRoutes from './server/routes/requests.js'
 import todoRoutes from './server/routes/todo.js'
 import announcementRoutes from './server/routes/announcements.js'
 import auditLogRoutes from './server/routes/auditLogs.js'
+import aiRoutes from './server/routes/ai.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const WEB_DIST = join(HERE, 'web', 'dist')
@@ -40,6 +41,7 @@ export function buildApp({ serveStatic = true } = {}) {
   app.register(todoRoutes)
   app.register(announcementRoutes)
   app.register(auditLogRoutes)
+  app.register(aiRoutes)
 
   // 前端构建产物（web/dist）。没构建过就跳过 —— 后端依然能独立当 API 服务用。
   const hasWeb = serveStatic && existsSync(join(WEB_DIST, 'index.html'))
@@ -86,6 +88,16 @@ export function buildApp({ serveStatic = true } = {}) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isMain) {
+  // 读 .env（Node 内置能力，不引 dotenv 依赖）；文件不存在就忽略，属正常情况。
+  // 放在 isMain 里而不是模块顶层 —— 测试 import 本文件时不该被 .env 影响，
+  // 否则「配了真 key 的机器」上跑测试会真的打到外部 API。
+  // Node 的规则是「已存在的环境变量优先」，外部显式 set 的值不会被 .env 覆盖。
+  try {
+    process.loadEnvFile?.()
+  } catch {
+    /* 没有 .env：AI 摘要会优雅降级，其余功能不受影响 */
+  }
+
   const port = Number(process.env.PORT) || 3200
   const app = buildApp()
   getDb() // 确保建表（首次运行自动建）

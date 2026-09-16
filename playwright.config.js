@@ -51,6 +51,10 @@ export default defineConfig({
     url: `${BASE_URL}/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-    env: { DB_PATH: E2E_DB, PORT: String(PORT) },
+    // ★ DEEPSEEK_API_KEY 显式置空：E2E 必须离线可跑、且每次结果一致。
+    //   不置空的话，一台本地配了 key 的机器上跑 E2E 会真的去调 DeepSeek（花钱 + 输出不稳定 + CI 上还得塞密钥）。
+    //   实测确认：环境里已存在（哪怕为空串）的变量优先级高于 .env，所以这行能稳稳压住 .env。
+    //   AI 的「真调用」路径由 tests/ai.test.js 用 mock fetch 覆盖；E2E 只断言降级路径。
+    env: { DB_PATH: E2E_DB, PORT: String(PORT), DEEPSEEK_API_KEY: '' },
   },
 })
