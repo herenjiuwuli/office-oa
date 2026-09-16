@@ -29,7 +29,7 @@
 | 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **148 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **161 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -54,7 +54,7 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 148 条接口用例
+npm test                            # ② 跑全部 161 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
@@ -253,7 +253,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **148 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
+| ② 接口测试 | `npm test` | **161 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
 | ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **36 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
@@ -262,7 +262,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **148 条用例，6 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments`
+- **161 条用例，7 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -458,7 +458,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（148 条）
+3. **接口测试** `npm test`（161 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
@@ -572,7 +572,7 @@ office-oa/
 │     └─ views/                 11 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 6 个测试文件（148 用例）
+├─ tests/                       setup + helpers + 7 个测试文件（161 用例）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）

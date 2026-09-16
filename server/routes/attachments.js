@@ -62,12 +62,33 @@ export default async function attachmentRoutes(app) {
 
       const storedName = makeStoredName(mime) // 随机名，不含用户输入 → 防路径穿越
       saveUpload(storedName, buffer)
+      // ④ 数量上限的**权威判定**在这里：把「数一遍」和「插一行」压进同一条 SQL。
+      //    上面那次 pre-check 只是为了尽早拒绝、别把 body 读进内存，它与插入之间隔着
+      //    `await part.toBuffer()`，并发请求会一起通过（典型 TOCTOU）—— 数出来都是 0。
+      //    SQL 语句内部不会被打断，所以这条带子查询的条件插入才是真正的防线；
+      //    与「并发审批用条件更新查 changes」是同一套路子。
       const info = getDb()
         .prepare(
           `INSERT INTO attachments (request_id, uploader_id, original_name, stored_name, mime, size)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+           SELECT ?, ?, ?, ?, ?, ?
+           WHERE (SELECT COUNT(*) FROM attachments WHERE request_id = ?) < ?`,
         )
-        .run(row.id, req.ctx.user.id, safeDownloadName(part.filename), storedName, mime, buffer.length)
+        .run(
+          row.id,
+          req.ctx.user.id,
+          safeDownloadName(part.filename),
+          storedName,
+          mime,
+          buffer.length,
+          row.id,
+          maxFilesPerRequest(),
+        )
+
+      if (info.changes === 0) {
+        // 被并发挤掉：刚落的盘要收回去，否则磁盘留下没人认领的孤儿文件
+        deleteUpload(storedName)
+        throw badRequest(`附件数量已达上限（${maxFilesPerRequest()} 个）`)
+      }
 
       logAction({
         userId: req.userId,
