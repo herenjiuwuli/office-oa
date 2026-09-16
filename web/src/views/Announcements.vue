@@ -19,7 +19,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await api.announcements()
+    const res = await api.announcements.list()
     items.value = res.items || []
   } catch (e) {
     error.value = e.message

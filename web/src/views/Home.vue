@@ -27,7 +27,7 @@ async function load() {
     const [t, m, a] = await Promise.all([
       api.todo(),
       api.requests.list({ mine: 1 }),
-      api.announcements(),
+      api.announcements.list(),
     ])
     todo.value = t.items || []
     mine.value = m.items || []
