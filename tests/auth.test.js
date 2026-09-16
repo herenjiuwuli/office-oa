@@ -124,4 +124,42 @@ describe('认证与 Token', () => {
   test('/health 与登录接口免鉴权', async () => {
     expect((await api(app).get('/health')).status).toBe(200)
   })
+
+  describe('Token 黑名单（登出强制作废，M2）', () => {
+    test('★ 登出后旧 token 立即失效 → 401（不等 24h 过期）', async () => {
+      const token = await login(app, U.hr)
+      // 登出前：正常使用
+      expect((await api(app, token).get('/api/me')).status).toBe(200)
+      // 登出
+      expect((await api(app, token).post('/api/auth/logout')).status).toBe(200)
+      // 登出后：同一个 token 必须立刻 401（证明服务端真的作废了，不是只靠前端丢 token）
+      expect((await api(app, token).get('/api/me')).status).toBe(401)
+    })
+
+    test('★ 黑名单按 jti 精确作废：同一用户另一个未登出的 token 仍可正常用', async () => {
+      const t1 = await login(app, U.hr)
+      const t2 = await login(app, U.hr)
+      expect((await api(app, t1).post('/api/auth/logout')).status).toBe(200)
+      // 已登出的会话：废了
+      expect((await api(app, t1).get('/api/me')).status).toBe(401)
+      // 同一用户的另一个会话：不受影响（证明是「按 token」不是「按用户」）
+      expect((await api(app, t2).get('/api/me')).status).toBe(200)
+    })
+
+    test('已登出的 token 再调登出 → 401（不崩溃、无副作用，靠 INSERT OR IGNORE 保证幂等）', async () => {
+      const token = await login(app, U.hr)
+      expect((await api(app, token).post('/api/auth/logout')).status).toBe(200)
+      // 该 token 已被拉黑，再调任何受保护接口（含登出自身）都 401，不会 500
+      expect((await api(app, token).post('/api/auth/logout')).status).toBe(401)
+      expect((await api(app, token).get('/api/me')).status).toBe(401)
+    })
+
+    test('★ 黑名单对所有受保护接口生效（不只 /api/me）', async () => {
+      const token = await login(app, U.hr)
+      await api(app, token).post('/api/auth/logout')
+      // 换一个受保护接口验证，证明是「守卫层」拦截，而非某个路由自己判断
+      expect((await api(app, token).get('/api/announcements')).status).toBe(401)
+      expect((await api(app, token).get('/api/audit-logs')).status).toBe(401)
+    })
+  })
 })

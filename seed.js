@@ -11,6 +11,10 @@ import { pathToFileURL } from 'node:url'
 export const DEFAULT_PASSWORD = 'oa123456'
 export const DEFAULT_PASSWORD_LABEL = '统一测试密码'
 
+// ⚠️ 顺序即「子表 → 父表」：带外键的子表必须排在父表前面。
+//    注意下面的 `PRAGMA foreign_keys = OFF` 写在 BEGIN 之后，而 SQLite 里该 PRAGMA
+//    在事务内是**空操作**（不生效）——所以清表只能靠这个顺序，不能指望临时关外键。
+//    新增带外键的表时，务必插到对应父表之前（如 token_blacklist 要在 users 之前）。
 const TABLES_TO_CLEAR = [
   'approval_tasks',
   'requests',
@@ -22,6 +26,7 @@ const TABLES_TO_CLEAR = [
   'roles',
   'announcements',
   'audit_logs',
+  'token_blacklist',
   'users',
   'departments',
 ]

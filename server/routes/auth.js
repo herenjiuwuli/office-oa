@@ -2,6 +2,7 @@
 import { getDb } from '../db.js'
 import { signToken, verifyPassword } from '../auth.js'
 import { loadUserContext } from '../permissions.js'
+import { blacklistToken } from '../tokenBlacklist.js'
 import { badRequest, handler, unauthorized } from '../errors.js'
 import { logAction } from '../audit.js'
 import { serializeUser } from '../serialize.js'
@@ -35,13 +36,16 @@ export default async function authRoutes(app) {
     }),
   )
 
-  // JWT 是无状态的，服务端没有会话可销毁。
-  // 这里只记一条审计；真正的「登出」是前端丢弃 token。
-  // （要做到服务端强制作废，需要引入 token 黑名单/版本号，属 M2）
+  // M2：JWT 本无状态，服务端无法主动销毁会话。
+  // 这里把当前 token 的 jti 写进 token_blacklist，守卫下次请求查到就 401 ——
+  // 旧 token 立刻作废（不等 24h 过期）。前端也要同时丢弃本地 token。
+  // 只作废「这个具体 token」（按 jti），同一用户的其他会话不受影响。
   app.post(
     '/api/auth/logout',
     handler(async (req) => {
-      logAction({ userId: req.userId, action: 'auth.logout', ip: req.ip })
+      const jti = req.tokenJti
+      if (jti) blacklistToken({ jti, userId: req.userId, reason: 'logout', expiredAt: req.tokenExp ? new Date(req.tokenExp * 1000).toISOString() : null })
+      logAction({ userId: req.userId, action: 'auth.logout', ip: req.ip, detail: jti ? `jti=${jti}` : '' })
       return { ok: true }
     }),
   )

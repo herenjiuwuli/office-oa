@@ -151,3 +151,18 @@ CREATE INDEX IF NOT EXISTS idx_req_applicant   ON requests(applicant_id, status)
 CREATE INDEX IF NOT EXISTS idx_req_status      ON requests(status, current_step);
 CREATE INDEX IF NOT EXISTS idx_task_pending    ON approval_tasks(approver_id, action);
 CREATE INDEX IF NOT EXISTS idx_log_user        ON audit_logs(user_id, created_at);
+
+-- Token 黑名单（M2）：JWT 本是无状态的，服务端没法主动销毁会话，
+-- 所以「登出」原本只是前端丢掉 token —— 旧 token 在 24h 过期前仍能用，等于没登出。
+-- 解法：每个 token 带一个唯一 jti，登出时把 jti 写进这张表；
+-- 守卫每次请求查表，命中即 401。这样登出才真正生效。
+-- expired_at 存 token 本身的 exp，方便日后写定时清理（过期的黑名单项已无意义，可 prune）。
+CREATE TABLE IF NOT EXISTS token_blacklist (
+  jti        TEXT    PRIMARY KEY,
+  user_id    INTEGER REFERENCES users(id),
+  reason     TEXT    NOT NULL DEFAULT 'logout',
+  expired_at TEXT,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_blacklist_user ON token_blacklist(user_id);

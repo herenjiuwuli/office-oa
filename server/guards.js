@@ -5,6 +5,7 @@
 //    测试一律走真实登录拿 token。
 import { verifyToken } from './auth.js'
 import { loadUserContext } from './permissions.js'
+import { isTokenBlacklisted } from './tokenBlacklist.js'
 
 // 免鉴权路径（精确匹配）
 const PUBLIC_PATHS = new Set(['/health', '/api/auth/login'])
@@ -26,6 +27,13 @@ export async function authGuard(req, reply) {
     return reply.code(401).send({ error: 'token 无效或已过期：' + e.message })
   }
 
+  // ★ Token 黑名单（M2）：登出后该 token 的 jti 会被写进 token_blacklist，
+  //   这里命中即 401 —— 否则「登出」只是前端丢掉 token，服务端在过期前还认旧 token。
+  //   注意：只作废「这个具体 token」（按 jti），不影响同一用户的其他会话。
+  if (payload.jti && isTokenBlacklisted(payload.jti)) {
+    return reply.code(401).send({ error: 'token 已登出，请重新登录' })
+  }
+
   // ★ 每次请求都回查数据库，不在 token 里缓存权限。两个理由：
   //   1) 用户可能已被停用 → 旧 token 必须立刻失效（返回 401）
   //   2) 角色/权限可能已被调整 → 不能拿签发时的权限快照用到底
@@ -37,4 +45,7 @@ export async function authGuard(req, reply) {
 
   req.ctx = ctx
   req.userId = ctx.user.id
+  // 透传给登出接口：logout 需要当前 token 的 jti 才能精确拉黑它（而不是整用户）
+  req.tokenJti = payload.jti
+  req.tokenExp = payload.exp
 }

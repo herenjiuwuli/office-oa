@@ -44,6 +44,9 @@ export function signToken(payload) {
   const now = Math.floor(Date.now() / 1000)
   const body = {
     ...payload,
+    // jti：每个 token 的唯一标识。登出时把 jti 写进 token_blacklist，
+    // 守卫查表即可在过期前强制作废该 token（见 server/guards.js）。
+    jti: crypto.randomUUID(),
     iat: now,
     exp: now + TOKEN_TTL_SEC,
   }

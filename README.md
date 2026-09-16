@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 完成）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 完成）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -28,7 +28,7 @@
 | 鉴权 | **自写 JWT**（scrypt + 手写 HS256） | 不引第三方库，见 `server/auth.js` |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **122 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **131 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **12 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -53,7 +53,7 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 122 条接口用例
+npm test                            # ② 跑全部 131 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（12 条，自动起 3300 端口的服务）
@@ -93,7 +93,7 @@ node seed.js --force
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/api/auth/login` | 公开 | 登录，返回 token + 角色 + 权限码 |
-| POST | `/api/auth/logout` | 登录 | 记审计（JWT 无状态，真正登出是前端丢 token） |
+| POST | `/api/auth/logout` | 登录 | 登出：把当前 token 的 `jti` 写进 `token_blacklist`（服务端强制作废），并记审计 |
 | GET | `/api/me` | 登录 | 当前用户档案 + 角色 + 权限码 |
 | GET | `/api/departments` | 登录 | 部门树（`?flat=1` 返回平铺） |
 | POST / PATCH | `/api/departments` `/:id` | `dept:write` | 增改部门 |
@@ -213,6 +213,24 @@ UPDATE approval_tasks SET action = ?, comment = ?, acted_at = datetime('now')
 
 代价是每请求一次多几次查询，M1 规模完全可接受。
 
+### 7. ⭐ Token 黑名单：让「登出」真正生效（M2 补）
+
+JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」如果只做前端丢 token，**旧 token 在 24h 过期前仍然有效**，等于没登出。这在安全评审里是个真会被问的点。
+
+解法是给每个 token 签一个唯一 `jti`（`server/auth.js` 的 `signToken`）：
+
+| 环节 | 做法 |
+|---|---|
+| 签发 | token 里带 `jti`（`crypto.randomUUID()`） |
+| 登出 | `server/routes/auth.js` 把 `jti` 写进 `token_blacklist`（`server/tokenBlacklist.js`） |
+| 校验 | `server/guards.js` 验签后查黑名单，命中即 `401`（`token 已登出，请重新登录`） |
+
+两个关键取舍：
+- **按 `jti` 精确作废，不是按用户**：同一用户在多设备登录，登出一台不影响另一台（有专门用例证明）。要做到「全设备登出」得再加 token 版本号，属过度设计，暂不做。
+- **黑名单只增不查重成本极低**：写入用 `INSERT OR IGNORE`，重复登出不会报错；命中路径是主键查询。`expired_at` 记了 token 自身过期时间，日后可加定时清理。
+
+> 停用账号的「旧 token 立刻失效」是**另一条**机制（第 5 条：每请求回查用户状态），两条互补 —— 停用管「账号」，黑名单管「这个 token」。
+
 ### 6. 单据用「通用表 + JSON form_data」
 
 一期重点是**审批引擎**，不是单据字段。通用表 + JSON 让「加一种单据类型」的成本降到近乎为零（加一个 validator 即可）。JSON 字段顺便还是测边界的好靶子（非法 JSON / 超长 / 类型错）。
@@ -230,7 +248,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **122 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
+| ② 接口测试 | `npm test` | **131 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
 | ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **12 条** / **36 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
@@ -239,7 +257,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **122 条用例，5 个文件**：`auth` / `permission` / `flow` / `requests` / `ai`
+- **131 条用例，5 个文件**：`auth` / `permission` / `flow` / `requests` / `ai`
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -393,7 +411,7 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（122 条）
+3. **接口测试** `npm test`（131 条）
 4. **UI 测试** `npm run test:e2e`（12 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
@@ -431,7 +449,7 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 
 | 不做 | 原因 |
 |---|---|
-| 权限管理界面 | 权限「检查」才是核心；M1 用 `server/permissions.js` 常量 + 种子数据 |
+| 权限管理界面 | 权限「检查」才是核心；M1 用 `server/permissions.js` 常量 + 种子数据。**M2 已补**（`Users.vue`） |
 | 考勤打卡 / 统计报表 | 与审批流主干无关，属纯 CRUD |
 | 文件附件上传 | 活动物料要传图 → M1 用「链接字段」代替 |
 | AI 审批摘要 | M1 不做；**M2 已补**（见「AI 审批摘要」一节）。它是**可选能力**，没配 key 会自动降级，不影响任何主流程 |
@@ -445,10 +463,10 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 
 1. ✅ **Playwright UI 自动化 + 接 CI** —— **12 条**用例（`e2e/`）+ GitHub Actions（`.github/workflows/ci.yml`），见「UI 自动化」与「CI」两节
 2. ✅ **AI 审批摘要** —— `server/lib/ai.js` + `server/routes/ai.js` + 前端面板 + **38 条用例**（真调用路径用 mock 覆盖，CI 不碰外网）。见「AI 审批摘要」一节
-3. 权限管理界面
-4. 审批人会签范围按部门收敛（现在 `role=dept_manager` 会命中**所有**部门经理，`purchase` 这种「或签」会被外部门经理抢批）← **已知缺口，待办**
-5. 附件上传
-6. token 黑名单 / 主动失效
+3. ✅ **权限管理界面** —— `web/src/views/Users.vue`（员工增删改 + 一次性带角色分配），见「前端」章节
+4. ✅ **审批人会签范围按部门收敛** —— `flow_steps.dept_scoped`：`purchase` 单步或签只取申请人**本部门**经理（修「外部门经理抢批」），`material` 跨部门会签保持不受影响。见「关键设计决策」
+5. ⬜ 附件上传 ← **M2 仅剩这一项**
+6. ✅ **token 黑名单 / 主动失效** —— 登出把 token 的 `jti` 写进 `token_blacklist`，守卫命中即 401。见「关键设计决策」第 7 条
 
 ---
 
@@ -476,9 +494,10 @@ office-oa/
 ├─ .github/workflows/ci.yml     静态扫描 → 构建 → 接口测试 → UI 测试
 ├─ server/
 │  ├─ db.js                     SQLite 封装（DB_PATH 惰性求值）
-│  ├─ schema.sql                12 张表 + 索引
-│  ├─ auth.js                   scrypt + 手写 HS256 JWT（纯函数，不碰库）
-│  ├─ guards.js                 全局鉴权守卫（每次回查用户状态与权限）
+│  ├─ schema.sql                13 张表 + 索引
+│  ├─ auth.js                   scrypt + 手写 HS256 JWT（纯函数，不碰库；签发时带 jti）
+│  ├─ tokenBlacklist.js         ⭐ Token 黑名单（登出强制作废，按 jti 精确拉黑）
+│  ├─ guards.js                 全局鉴权守卫（每次回查用户状态与权限 + 查 token 黑名单）
 │  ├─ permissions.js            权限码字典 + requirePerm 中间件
 │  ├─ errors.js                 BusinessError + 统一错误出口
 │  ├─ audit.js                  审计日志
@@ -503,7 +522,7 @@ office-oa/
 │     └─ views/                 11 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 5 个测试文件（122 用例）
+├─ tests/                       setup + helpers + 5 个测试文件（131 用例）
 ├─ e2e/                         Playwright UI 用例（12 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）
