@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 完成）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -26,11 +26,12 @@
 | 后端 | Node 22 + **Fastify 5** | 内置 JSON Schema 校验，路由契约清晰 |
 | 存储 | **node:sqlite**（Node 内置） | 零原生依赖；关系型数据必须用关系库 |
 | 鉴权 | **自写 JWT**（scrypt + 手写 HS256） | 不引第三方库，见 `server/auth.js` |
+| 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **131 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **148 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
-| UI 自动化 | **Playwright**（`channel: 'chrome'`） | **12 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
+| UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
 | AI（可选） | **DeepSeek**（`server/lib/ai.js`） | 审批摘要。**没配 key 就优雅降级**，不影响任何主流程，详见「AI 审批摘要」一节 |
 | 语言 | 全 JavaScript | 不用 TypeScript（M1 不引入额外复杂度） |
@@ -53,10 +54,10 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 131 条接口用例
+npm test                            # ② 跑全部 148 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
-npm run test:e2e                    # ③ Playwright 跑同一链路（12 条，自动起 3300 端口的服务）
+npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
 npm run verify                      # 一条命令：静态扫描 + 构建 + 接口测试 + UI 测试（= CI 跑的东西）
 ```
 
@@ -110,6 +111,10 @@ node seed.js --force
 | POST | `/api/requests/:id/cancel` | 申请人 | 撤回（草稿 / 审批中可撤回） |
 | GET | `/api/ai/status` | 登录 | AI 是否已启用（前端据此决定按钮置灰） |
 | POST | `/api/requests/:id/ai-summary` | 申请人 / 审批人 / `request:read:all` | 生成审批摘要。**AI 不可用时也返回 200 + `available:false`**，不抛 5xx |
+| POST | `/api/requests/:id/attachments` | 申请人 + 可编辑态 | 上传附件（multipart，字段名 `file`）。类型看真实字节，大小/数量有上限 |
+| GET | `/api/requests/:id/attachments` | 申请人 / 审批人 / `request:read:all` | 附件列表 |
+| GET | `/api/attachments/:id` | 能从详情看到该单据的人 | 下载附件（**要带 token**，不是静态直链） |
+| DELETE | `/api/attachments/:id` | 上传者本人 + 可编辑态 | 删除附件 |
 | GET | `/api/todo` | 登录 | 我的待办 |
 | GET | `/api/announcements` | 登录 | 公告列表 |
 | POST | `/api/announcements` | `announcement:write` | 发公告 |
@@ -248,8 +253,8 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **131 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
-| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **12 条** / **36 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
+| ② 接口测试 | `npm test` | **148 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
+| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **36 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）。
@@ -257,7 +262,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **131 条用例，5 个文件**：`auth` / `permission` / `flow` / `requests` / `ai`
+- **148 条用例，6 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments`
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -299,7 +304,7 @@ node scripts/oa-ui-check.mjs     # 36 条断言，走一段就全过
 ## UI 自动化（M2：Playwright）
 
 ```bash
-npm run test:e2e        # 重置 E2E 专用库 → 自动拉起后端（3300）→ 跑 12 条用例
+npm run test:e2e        # 重置 E2E 专用库 → 自动拉起后端（3300）→ 跑 13 条用例
 npm run test:e2e:report # 看 HTML 报告
 npm run verify          # 本地一条命令复现整条 CI：静态扫描 → 构建 → 接口 → UI
 ```
@@ -346,13 +351,14 @@ GitHub Actions 的 `ubuntu-latest` 镜像**自带 Google Chrome stable**，所�
 > 一个实测细节：Node 读 `.env` 的规则是「环境里**已存在**的变量优先」，而**空串也算已存在**。
 > 所以 `DEEPSEEK_API_KEY: ''` 能稳稳压住 `.env` 里的真 key（本项目实测确认），不用额外写代码去关它。
 
-### 覆盖的 12 条用例
+### 覆盖的 13 条用例
 
 | 文件 | 用例 |
 |---|---|
 | `e2e/guard-rbac.spec.js` | 未登录守卫 + 登录页不套外壳 / RBAC 菜单隐藏 + **纵向越权看到真实 403** |
 | `e2e/approval-flow.spec.js` | 提交 → 一级审批 → 二级审批 → 归档 / **归档文案语义** / 驳回不填理由被拦 → 驳回 → 重提（轮次保留）/ 移动端 390px / 登出清 token |
 | `e2e/ai-panel.spec.js` | AI 卡片存在且**声明「仅供参考」** / 未配置时按钮置灰并说明原因 / 归档单据同样可见 / **无权查看时不渲染卡片**（越权不该多一条信息泄漏口） |
+| `e2e/attachments.spec.js` | 草稿上传附件 → 列表出现（前端 FormData 上传路径）→ 删除（接住 confirm）→ 恢复空态 |
 
 > 其中「归档单据给已审过的审批人看」这条比 CDP 脚本更严：CDP 只断言了「没有可执行的操作」（三个分支都命中，其实证明不了什么），
 > Playwright 直接断言 **`单据已结束` 出现且 `还没轮到你` 不出现** —— 这才是当年那个文案 bug 的精确判据。
@@ -405,14 +411,55 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 
 ---
 
+## 附件上传（M2）
+
+M1 用「链接字段」凑合（物料图片贴个外链），M2 改成真上传。表面上是「收文件」，**实际这个功能的 90% 是安全问题** —— 一个能被测试的平台，上传接口就是最经典的攻击面。
+
+### 五条安全红线（每条都有对应用例）
+
+| 红线 | 做法 | 用例 |
+|---|---|---|
+| **类型看真实字节，不看文件名/声明** | 嗅探魔数（PNG/JPEG/GIF/WebP/PDF），不在白名单直接 400 | 把 exe 改名 `.png` 上传 → 400 |
+| **大小 / 数量有上限** | 单文件 5MB、每单最多 5 个（`UPLOAD_DIR` / `MAX_UPLOAD_BYTES` / `MAX_FILES_PER_REQUEST` 可配） | 传 6KB（上限设 1KB）→ 400 |
+| **落盘名与用户输入解耦** | 存成 `<uuid>.<ext>`，原始名只入库供展示 | 文件名写 `../../evil.png` → 磁盘随机名、不穿越 |
+| **下载要过鉴权** | `/api/attachments/:id` 复用「能看这张单据」的判定；附件**不挂静态目录** | 无关同事下载 → 403 |
+| **响应头注入防护** | 下载文件名走 RFC 5987 `filename*=UTF-8''` 编码，且清洗 `\ / CR LF "` | 中文名/恶意名不产生裸非 ASCII 头 |
+
+> 关键点：**上传目录绝不能挂到静态根下**。否则「随机名」也拦不住枚举/猜测 URL —— 下载必须走带 token 的接口。
+
+### 为什么「按字节判类型」是这里最值钱的一条
+
+只看扩展名或客户端 `Content-Type` 是**零成本伪造成立**的：`mv evil.exe evil.png` 就绕过了。真正的判据只能是文件头魔数：
+
+```js
+if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png'
+```
+
+配套：`stored_name` 生成时只取「白名单 mime → 固定扩展名」，用户的字符串**从不进入磁盘路径**。两道合起来，路径穿越和「上传可执行文件」这两类问题一起被堵死。
+
+### 与「单据状态机」的耦合（容易漏）
+
+附件是**单据内容的一部分**，所以它跟表单字段守同一条规则：**提交后锁定**。
+
+- 增/删附件：仅 `申请人` + 单据处于 `draft` / `rejected`（可编辑态），否则 **409**（不是 403 —— 这是状态冲突）；
+- 查看/下载附件：沿用单据的横向越权防线（`canViewRequest`），审批人提交后就能看。
+
+### 前端这一处的特殊性
+
+整个前端**只有附件上传这一处不是 JSON 请求**（走 `FormData` + 原生 `fetch`），所以它也是「接口测试覆盖不到」的地方 —— 因此单独补了一条 UI 层 E2E：真的把文件塞进 `<input type=file>`，断言列表出现、删除后回到空态。下载同理：`<a href>` 带不上 `Authorization` 头，前端改成带 token `fetch` 拿 blob 再触发保存。
+
+> 一句可讲的：**「上传接口是安全功能，不是 CRUD」** —— 类型/大小/路径/鉴权/响应头，五个面每一个都能被绕过，也每一个都写了用例。
+
+---
+
 ## CI（GitHub Actions）
 
 `.github/workflows/ci.yml`：push / PR 时按顺序跑
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（131 条）
-4. **UI 测试** `npm run test:e2e`（12 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
+3. **接口测试** `npm test`（148 条）
+4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
 
@@ -451,7 +498,7 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 |---|---|
 | 权限管理界面 | 权限「检查」才是核心；M1 用 `server/permissions.js` 常量 + 种子数据。**M2 已补**（`Users.vue`） |
 | 考勤打卡 / 统计报表 | 与审批流主干无关，属纯 CRUD |
-| 文件附件上传 | 活动物料要传图 → M1 用「链接字段」代替 |
+| 文件附件上传 | M1 用「链接字段」代替；**M2 已补**（见「附件上传」一节） |
 | AI 审批摘要 | M1 不做；**M2 已补**（见「AI 审批摘要」一节）。它是**可选能力**，没配 key 会自动降级，不影响任何主流程 |
 | 消息通知（站内信 / 邮件） | 待办列表已能替代 |
 | 组织架构拖拽排序 | M1 用 `sort` 数字字段 |
@@ -461,12 +508,14 @@ cp .env.example .env      # 填 DEEPSEEK_API_KEY；不填也能跑，会自动�
 
 ### M2 进度
 
-1. ✅ **Playwright UI 自动化 + 接 CI** —— **12 条**用例（`e2e/`）+ GitHub Actions（`.github/workflows/ci.yml`），见「UI 自动化」与「CI」两节
+1. ✅ **Playwright UI 自动化 + 接 CI** —— **13 条**用例（`e2e/`）+ GitHub Actions（`.github/workflows/ci.yml`），见「UI 自动化」与「CI」两节
 2. ✅ **AI 审批摘要** —— `server/lib/ai.js` + `server/routes/ai.js` + 前端面板 + **38 条用例**（真调用路径用 mock 覆盖，CI 不碰外网）。见「AI 审批摘要」一节
 3. ✅ **权限管理界面** —— `web/src/views/Users.vue`（员工增删改 + 一次性带角色分配），见「前端」章节
 4. ✅ **审批人会签范围按部门收敛** —— `flow_steps.dept_scoped`：`purchase` 单步或签只取申请人**本部门**经理（修「外部门经理抢批」），`material` 跨部门会签保持不受影响。见「关键设计决策」
-5. ⬜ 附件上传 ← **M2 仅剩这一项**
+5. ✅ **附件上传** —— `server/lib/storage.js` + `server/routes/attachments.js` + 前端附件卡片 + **17 条接口用例 + 1 条 E2E**。见「附件上传」一节
 6. ✅ **token 黑名单 / 主动失效** —— 登出把 token 的 `jti` 写进 `token_blacklist`，守卫命中即 401。见「关键设计决策」第 7 条
+
+> **M2 全部完成。**
 
 ---
 
@@ -489,12 +538,12 @@ office-oa/
 ├─ index.js                     只做装配：守卫 + 路由注册 + 静态托管 + 监听
 ├─ seed.js                      虚构种子数据
 ├─ playwright.config.js         E2E 配置（channel: chrome 不下载浏览器 / E2E 独立库 / 自动起服务 / 置空 AI key）
-├─ .env.example                 环境变量样例（**只影响 AI 摘要**；不配也能跑）
+├─ .env.example                 环境变量样例（AI 摘要 + 附件上传；都有默认值，不配也能跑）
 ├─ .gitattributes               统一行尾 LF（避免 Windows 上「整个文件被改动」的假 diff）
 ├─ .github/workflows/ci.yml     静态扫描 → 构建 → 接口测试 → UI 测试
 ├─ server/
 │  ├─ db.js                     SQLite 封装（DB_PATH 惰性求值）
-│  ├─ schema.sql                13 张表 + 索引
+│  ├─ schema.sql                14 张表 + 索引
 │  ├─ auth.js                   scrypt + 手写 HS256 JWT（纯函数，不碰库；签发时带 jti）
 │  ├─ tokenBlacklist.js         ⭐ Token 黑名单（登出强制作废，按 jti 精确拉黑）
 │  ├─ guards.js                 全局鉴权守卫（每次回查用户状态与权限 + 查 token 黑名单）
@@ -506,8 +555,9 @@ office-oa/
 │  │  ├─ engine.js            ⭐ 审批引擎（本项目最核心的文件）
 │  │  └─ validators.js          各单据类型的 form_data 校验
 │  ├─ lib/
-│  │  └─ ai.js                ⭐ 审批摘要（prompt 注入防护 / 优雅降级 / 输出规范化）
-│  └─ routes/                   auth / departments / users / requests / todo / announcements / auditLogs / ai
+│  │  ├─ ai.js                ⭐ 审批摘要（prompt 注入防护 / 优雅降级 / 输出规范化）
+│  │  └─ storage.js           ⭐ 附件存储（魔数嗅探 / 路径防护 / 大小上限）
+│  └─ routes/                   auth / departments / users / requests / attachments / todo / announcements / auditLogs / ai
 ├─ web/                         前端（独立 package.json）
 │  ├─ index.html
 │  ├─ vite.config.js            dev 端口 5273，代理 /api → 3200
@@ -522,8 +572,8 @@ office-oa/
 │     └─ views/                 11 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 5 个测试文件（131 用例）
-├─ e2e/                         Playwright UI 用例（12 条）+ 专用库重置脚本
+├─ tests/                       setup + helpers + 6 个测试文件（148 用例）
+├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）
    ├─ check-vue-tpl.mjs         静态扫描：模板里未声明的组件/事件函数

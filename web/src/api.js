@@ -81,6 +81,62 @@ export const api = {
   // --- 待办 ---
   todo: () => request('/todo'),
 
+  // --- 附件（M2）---
+  // 上传/下载不能走上面的 request()：上传要 multipart（不是 JSON），
+  // 下载要拿二进制 blob，而且**必须带 Authorization 头**（所以不能用裸 <a href>）。
+  attachments: {
+    list: (requestId) => request(`/requests/${requestId}/attachments`),
+    remove: (id) => request(`/attachments/${id}`, { method: 'DELETE' }),
+
+    upload: async (requestId, file) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      const headers = {}
+      const token = getToken()
+      if (token) headers.Authorization = `Bearer ${token}`
+      const res = await fetch(`${BASE}/requests/${requestId}/attachments`, { method: 'POST', headers, body: fd })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        if (res.status === 401) {
+          clearSession()
+          if (window.location.pathname !== '/login') window.location.replace('/login?expired=1')
+        }
+        const err = new Error(data.error || `上传失败（HTTP ${res.status}）`)
+        err.status = res.status
+        throw err
+      }
+      return data
+    },
+
+    download: async (id, filename) => {
+      const token = getToken()
+      // 用成员赋值而不是对象字面量 { Authorization: ... }：既和 request() 保持一致，
+      // 也避开静态扫描把大写键名误判成「未声明标识符」。
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const res = await fetch(`${BASE}/attachments/${id}`, { headers })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        if (res.status === 401) {
+          clearSession()
+          if (window.location.pathname !== '/login') window.location.replace('/login?expired=1')
+        }
+        const err = new Error(data.error || `下载失败（HTTP ${res.status}）`)
+        err.status = res.status
+        throw err
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename || 'download'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    },
+  },
+
   // --- AI 摘要（可选能力）---
   // 注意：未配置 key / AI 挂了都不算「错误」——后端会返回 200 + available:false，
   // 所以这里的 summarize 正常情况下不会抛异常，前端按 available 分支渲染即可。

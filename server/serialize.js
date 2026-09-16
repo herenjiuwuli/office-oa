@@ -71,3 +71,18 @@ export function serializeTask(row) {
     createdAt: row.created_at,
   }
 }
+
+export function serializeAttachment(row) {
+  return {
+    id: row.id,
+    requestId: row.request_id,
+    uploaderId: row.uploader_id,
+    uploaderName: row.uploader_name ?? null,
+    name: row.original_name,
+    mime: row.mime,
+    size: row.size,
+    createdAt: row.created_at,
+    // 下载地址是「需要鉴权」的接口：前端必须带 token 取（见 web/src/api.js 的 downloadAttachment）
+    url: `/api/attachments/${row.id}`,
+  }
+}

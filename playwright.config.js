@@ -19,6 +19,8 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
 
 // ⚠️ E2E 用**独立数据库**：跑测试不会污染 data/app.db（那是真机验收脚本和开发自用的库）
 const E2E_DB = fileURLToPath(new URL('./data/e2e.db', import.meta.url))
+// 附件也隔离：E2E 上传的文件落这里，不跟开发自用的 data/uploads 混在一起
+const E2E_UPLOAD = fileURLToPath(new URL('./data/e2e-uploads', import.meta.url))
 
 export default defineConfig({
   testDir: './e2e',
@@ -55,6 +57,6 @@ export default defineConfig({
     //   不置空的话，一台本地配了 key 的机器上跑 E2E 会真的去调 DeepSeek（花钱 + 输出不稳定 + CI 上还得塞密钥）。
     //   实测确认：环境里已存在（哪怕为空串）的变量优先级高于 .env，所以这行能稳稳压住 .env。
     //   AI 的「真调用」路径由 tests/ai.test.js 用 mock fetch 覆盖；E2E 只断言降级路径。
-    env: { DB_PATH: E2E_DB, PORT: String(PORT), DEEPSEEK_API_KEY: '' },
+    env: { DB_PATH: E2E_DB, UPLOAD_DIR: E2E_UPLOAD, PORT: String(PORT), DEEPSEEK_API_KEY: '' },
   },
 })

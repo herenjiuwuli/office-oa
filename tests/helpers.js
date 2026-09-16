@@ -1,7 +1,12 @@
 // 测试公共工具：建 app、登录取 token、带 token 发请求
+import os from 'node:os'
+import path from 'node:path'
 import { resetDb } from '../server/db.js'
 import { buildApp } from '../index.js'
 import { DEFAULT_PASSWORD, seed } from '../seed.js'
+
+// 附件测试用独立上传目录：绝不写进仓库的 data/uploads（否则污染工作区、留下脏文件）
+process.env.UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(os.tmpdir(), `office-oa-test-uploads-${process.pid}`)
 
 export const PASSWORD = DEFAULT_PASSWORD
 
@@ -76,8 +81,59 @@ export function api(app, token) {
     get: (url, query) => call('GET', url, undefined, query),
     post: (url, payload) => call('POST', url, payload),
     patch: (url, payload) => call('PATCH', url, payload),
+    del: (url) => call('DELETE', url),
   }
 }
+
+// ---------------------------------------------------------------------------
+// 附件上传 / 下载（multipart 手搓，避免引 form-data 依赖）
+// ---------------------------------------------------------------------------
+
+const BOUNDARY = '----officeoaTestBoundary7f3a9c'
+
+/** 构造一个「单文件」的 multipart/form-data 请求体（Buffer）。 */
+export function multipartBody(filename, content, { field = 'file', contentType = 'application/octet-stream' } = {}) {
+  const head = Buffer.from(
+    `--${BOUNDARY}\r\n` +
+      `Content-Disposition: form-data; name="${field}"; filename="${filename}"\r\n` +
+      `Content-Type: ${contentType}\r\n\r\n`,
+  )
+  const tail = Buffer.from(`\r\n--${BOUNDARY}--\r\n`)
+  return { body: Buffer.concat([head, Buffer.from(content), tail]), boundary: BOUNDARY }
+}
+
+/** 上传附件 → { status, body }。token 传 null 模拟未登录。 */
+export async function uploadAttachment(app, token, requestId, filename, content, opts = {}) {
+  const { body, boundary } = multipartBody(filename, content, opts)
+  const res = await app.inject({
+    method: 'POST',
+    url: `/api/requests/${requestId}/attachments`,
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    payload: body,
+  })
+  return { status: res.statusCode, body: safeJson(res.body) }
+}
+
+/** 下载附件 → { status, headers, body: Buffer } */
+export async function downloadAttachment(app, token, id) {
+  const res = await app.inject({
+    method: 'GET',
+    url: `/api/attachments/${id}`,
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  })
+  return { status: res.statusCode, headers: res.headers, body: res.rawPayload }
+}
+
+// 三种夹具：真实魔数的 PNG/PDF，以及「MZ 开头、改名成图片」的伪装可执行文件
+export const PNG_BYTES = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('iVBORw0KGgo-fake-png-body-content'),
+])
+export const PDF_BYTES = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.from('1 0 obj\n<< >>\nendobj\n%%EOF')])
+export const FAKE_EXE_BYTES = Buffer.concat([Buffer.from([0x4d, 0x5a]), Buffer.alloc(64, 0x90)]) // MZ 头
 
 /** 篡改 JWT 的 payload（签名不变 → 校验必然失败） */
 export function tamperPayload(token, patch) {

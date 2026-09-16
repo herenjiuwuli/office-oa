@@ -1,4 +1,4 @@
--- 办公 OA · M1 表结构（9 张表）
+-- 办公 OA · 表结构（14 张表：M1 主体 9 张 + M2 新增 flow_steps.dept_scoped / attachments / token_blacklist）
 -- 设计说明见 方案文档 §3.1。这里只写「为什么这么建」的关键注释，方便关源码时能讲出来。
 
 PRAGMA foreign_keys = ON;
@@ -133,6 +133,23 @@ CREATE TABLE IF NOT EXISTS announcements (
   created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 附件（M2）：活动物料要传图/传 PDF，M1 用「链接字段」凑合，这里改成真上传。
+-- ★ stored_name 是磁盘上的**随机名**（与原始文件名无关），两个作用：
+--   ① 防路径穿越：用户传 `../../etc/passwd` 也只会存成 `<uuid>.png`，磁盘路径永不拼接用户输入；
+--   ② 防覆盖/猜测：随机名让「猜 URL 下载别人附件」失效（且下载还要过鉴权）。
+--   original_name 只用于展示与下载时的文件名（下发前会做头注入清洗）。
+-- mime 以**服务端嗅探的真实字节**为准（见 server/lib/storage.js），不信任客户端声明的类型。
+CREATE TABLE IF NOT EXISTS attachments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id    INTEGER NOT NULL REFERENCES requests(id),
+  uploader_id   INTEGER NOT NULL REFERENCES users(id),
+  original_name TEXT    NOT NULL,
+  stored_name   TEXT    NOT NULL UNIQUE,
+  mime          TEXT    NOT NULL,
+  size          INTEGER NOT NULL,
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- 审计日志：只记关键操作（登录、增删改、审批）。是测「审计完整性」的靶子。
 CREATE TABLE IF NOT EXISTS audit_logs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,6 +168,8 @@ CREATE INDEX IF NOT EXISTS idx_req_applicant   ON requests(applicant_id, status)
 CREATE INDEX IF NOT EXISTS idx_req_status      ON requests(status, current_step);
 CREATE INDEX IF NOT EXISTS idx_task_pending    ON approval_tasks(approver_id, action);
 CREATE INDEX IF NOT EXISTS idx_log_user        ON audit_logs(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_attach_request  ON attachments(request_id, id);
 
 -- Token 黑名单（M2）：JWT 本是无状态的，服务端没法主动销毁会话，
 -- 所以「登出」原本只是前端丢掉 token —— 旧 token 在 24h 过期前仍能用，等于没登出。

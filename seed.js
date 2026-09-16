@@ -17,6 +17,7 @@ export const DEFAULT_PASSWORD_LABEL = '统一测试密码'
 //    新增带外键的表时，务必插到对应父表之前（如 token_blacklist 要在 users 之前）。
 const TABLES_TO_CLEAR = [
   'approval_tasks',
+  'attachments',
   'requests',
   'flow_steps',
   'flows',

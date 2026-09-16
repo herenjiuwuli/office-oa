@@ -41,9 +41,9 @@ async function load() {
 
 // --- 我是谁、我能做什么 ---
 const isApplicant = computed(() => !!detail.value && detail.value.applicantId === me.value?.id)
-const canSubmit = computed(
-  () => isApplicant.value && ['draft', 'rejected'].includes(detail.value?.status),
-)
+// 「可编辑态」：草稿 / 被驳回（可改了重提）。附件增删与「能否提交」共用同一个判断。
+const isEditable = computed(() => ['draft', 'rejected'].includes(detail.value?.status))
+const canSubmit = computed(() => isApplicant.value && isEditable.value)
 const canCancel = computed(() => isApplicant.value && ['draft', 'pending'].includes(detail.value?.status))
 
 /** 我是「当前这一步」的待审审批人吗？注意必须同时匹配 round / stepNo / 未处理 */
@@ -193,6 +193,56 @@ onMounted(() => {
   load()
   loadAiStatus()
 })
+
+// --- 附件（M2）---
+// 前端只负责「谁能看到上传/删除按钮」的 UX；真正的规则（申请人 + 可编辑态、
+// 类型白名单、大小上限、下载鉴权）全在后端，前端拦不住也不打算拦。
+const attachBusy = ref(false)
+const attachError = ref('')
+const canEditAttachments = computed(() => isApplicant.value && isEditable.value)
+
+function fmtSize(n) {
+  if (!n && n !== 0) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function onPickFile(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  attachBusy.value = true
+  attachError.value = ''
+  try {
+    await api.attachments.upload(id.value, file)
+    await load()
+  } catch (err) {
+    attachError.value = err.message
+  } finally {
+    attachBusy.value = false
+    e.target.value = '' // 清空，允许连续上传同一个文件
+  }
+}
+
+async function onDownloadAttachment(a) {
+  attachError.value = ''
+  try {
+    await api.attachments.download(a.id, a.name)
+  } catch (err) {
+    attachError.value = err.message
+  }
+}
+
+async function onDeleteAttachment(a) {
+  if (!window.confirm(`确定删除附件「${a.name}」？`)) return
+  attachError.value = ''
+  try {
+    await api.attachments.remove(a.id)
+    await load()
+  } catch (err) {
+    attachError.value = err.message
+  }
+}
 </script>
 
 <template>
@@ -389,6 +439,50 @@ onMounted(() => {
                 <dd class="t-muted">无内容</dd>
               </template>
             </dl>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>附件</span>
+              <span class="hint">活动物料 / 报销凭证等，随单据一起流转</span>
+            </div>
+
+            <div v-if="attachError" class="alert alert-error" style="margin-bottom: 10px">{{ attachError }}</div>
+
+            <div v-if="!detail.attachments?.length" class="t-muted" style="font-size: 13px">暂无附件</div>
+
+            <div v-else data-t="attach-list" style="display: flex; flex-direction: column; gap: 6px">
+              <div
+                v-for="a in detail.attachments"
+                :key="a.id"
+                data-t="attach-item"
+                style="display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap"
+              >
+                <span class="chip gray t-nowrap">{{ a.mime }}</span>
+                <b style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px">{{ a.name }}</b>
+                <span class="t-muted t-nowrap">{{ fmtSize(a.size) }}</span>
+                <span class="t-muted t-nowrap">· {{ a.uploaderName }}</span>
+                <button class="btn btn-sm" @click="onDownloadAttachment(a)">下载</button>
+                <button v-if="canEditAttachments" class="btn btn-sm btn-danger" @click="onDeleteAttachment(a)">删除</button>
+              </div>
+            </div>
+
+            <div v-if="canEditAttachments" style="margin-top: 12px">
+              <label class="btn" :class="{ disabled: attachBusy }">
+                {{ attachBusy ? '上传中…' : '选择文件上传' }}
+                <input
+                  type="file"
+                  data-t="attach-input"
+                  style="display: none"
+                  accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+                  :disabled="attachBusy"
+                  @change="onPickFile"
+                />
+              </label>
+              <div class="t-muted" style="font-size: 12px; margin-top: 4px">
+                允许 PNG / JPEG / GIF / WebP / PDF，单文件 ≤ 5MB。提交后附件锁定，不能再增删。
+              </div>
+            </div>
           </div>
 
           <div class="card">

@@ -62,6 +62,19 @@ export function listTasks(requestId) {
     .all(Number(requestId))
 }
 
+/** 附件列表（M2）：按 id 升序，附上传人姓名。单据详情/附件接口共用。 */
+export function listAttachments(requestId) {
+  return getDb()
+    .prepare(
+      `SELECT a.*, u.real_name AS uploader_name
+         FROM attachments a
+         JOIN users u ON u.id = a.uploader_id
+        WHERE a.request_id = ?
+        ORDER BY a.id ASC`,
+    )
+    .all(Number(requestId))
+}
+
 /** 我的待办：只查「待审 + 单据仍在审批中」，已关闭/已归档的不出现 */
 export function listTodo(userId) {
   return getDb()

@@ -3,12 +3,13 @@ import { getDb } from '../db.js'
 import { badRequest, forbidden, handler, notFound } from '../errors.js'
 import { requirePerm, hasPerm } from '../permissions.js'
 import { logAction } from '../audit.js'
-import { serializeRequest, serializeTask } from '../serialize.js'
+import { serializeAttachment, serializeRequest, serializeTask } from '../serialize.js'
 import {
   actOnRequest,
   canViewRequest,
   cancelRequest,
   getRequestOr404,
+  listAttachments,
   listTasks,
   parseSnapshot,
   submitRequest,
@@ -28,6 +29,7 @@ function detail(req, ctx) {
     ...serializeRequest(row),
     flowSnapshot: parseSnapshot(row),
     tasks: listTasks(row.id).map(serializeTask),
+    attachments: listAttachments(row.id).map(serializeAttachment),
   }
 }
 

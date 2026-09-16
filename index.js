@@ -1,6 +1,7 @@
 // Fastify 入口。业务规则不在这里 —— 这里只做「装配」：守卫 + 路由注册 + 静态托管 + 监听。
 import Fastify from 'fastify'
 import fastifyStatic from '@fastify/static'
+import fastifyMultipart from '@fastify/multipart'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -8,11 +9,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { authGuard } from './server/guards.js'
 import { dbPath, getDb } from './server/db.js'
 import { handler } from './server/errors.js'
+import { maxFilesPerRequest, maxUploadBytes } from './server/lib/storage.js'
 
 import authRoutes from './server/routes/auth.js'
 import departmentRoutes from './server/routes/departments.js'
 import userRoutes from './server/routes/users.js'
 import requestRoutes from './server/routes/requests.js'
+import attachmentRoutes from './server/routes/attachments.js'
 import todoRoutes from './server/routes/todo.js'
 import announcementRoutes from './server/routes/announcements.js'
 import auditLogRoutes from './server/routes/auditLogs.js'
@@ -32,12 +35,23 @@ export function buildApp({ serveStatic = true } = {}) {
   // 全局鉴权守卫：onRequest 在所有路由之前执行（非 /api 路径直接放行，见 server/guards.js）
   app.addHook('onRequest', authGuard)
 
+  // multipart：附件上传用。必须在路由注册**之前**注册 —— @fastify/multipart 用 fastify-plugin
+  // 打破封装，decorator 只对「之后注册的」生效。
+  //   limits.fileSize          单文件上限（超限时我们自行判定 truncated，不让插件抛 500）
+  //   limits.files             单次请求文件数上限
+  //   throwFileSizeLimit:false 超限不抛异常、改为截断 + 置 truncated，由路由给可读的 400
+  app.register(fastifyMultipart, {
+    limits: { fileSize: maxUploadBytes(), files: maxFilesPerRequest() },
+    throwFileSizeLimit: false,
+  })
+
   app.get('/health', async () => ({ ok: true, service: 'office-oa', ts: Date.now() }))
 
   app.register(authRoutes)
   app.register(departmentRoutes)
   app.register(userRoutes)
   app.register(requestRoutes)
+  app.register(attachmentRoutes)
   app.register(todoRoutes)
   app.register(announcementRoutes)
   app.register(auditLogRoutes)

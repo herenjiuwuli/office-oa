@@ -17,6 +17,10 @@ data/*.db-shm
 # 清库前的备份也不进仓库
 data/backups/
 
+# 附件上传目录（用户上传的文件不进仓库）
+data/uploads/
+data/e2e-uploads/
+
 # 本地环境变量
 .env
 .env.local
