@@ -81,23 +81,27 @@ const FLOWS = [
     description: '直属上级审批 → 人事复核',
     steps: [
       { step_no: 1, name: '直属上级审批', approver_type: 'manager', approver_ref: '', mode: 'any' },
-      { step_no: 2, name: '人事复核', approver_type: 'role', approver_ref: 'hr', mode: 'any' },
+      { step_no: 2, name: '人事复核', approver_type: 'role', approver_ref: 'hr', mode: 'any', dept_scoped: 0 },
     ],
   },
   {
     type: 'material',
     name: '活动物料审批',
-    description: '部门经理会签 → 总经办审批',
+    description: '部门经理会签（跨部门的，两个部门经理都要批）→ 总经办审批',
     steps: [
-      { step_no: 1, name: '部门经理会签', approver_type: 'role', approver_ref: 'dept_manager', mode: 'all' },
+      // dept_scoped=0：跨部门会签，两个部门经理都收任务
+      { step_no: 1, name: '部门经理会签', approver_type: 'role', approver_ref: 'dept_manager', mode: 'all', dept_scoped: 0 },
       { step_no: 2, name: '总经办审批', approver_type: 'user', approver_ref: '1', mode: 'any' },
     ],
   },
   {
     type: 'purchase',
     name: '采购申请',
-    description: '部门经理审批（或签）',
-    steps: [{ step_no: 1, name: '部门经理审批', approver_type: 'role', approver_ref: 'dept_manager', mode: 'any' }],
+    description: '本部门经理审批（或签，按部门收敛，外部门经理不能抢批）',
+    steps: [
+      // dept_scoped=1：只取申请人所在部门的经理，避免外部门经理抢批（M2 修的已知缺口）
+      { step_no: 1, name: '部门经理审批', approver_type: 'role', approver_ref: 'dept_manager', mode: 'any', dept_scoped: 1 },
+    ],
   },
 ]
 
@@ -150,14 +154,14 @@ export function seed(db = getDb(), { force = false } = {}) {
 
     const insFlow = db.prepare(`INSERT INTO flows (id, type, name, description, enabled) VALUES (?, ?, ?, ?, 1)`)
     const insStep = db.prepare(
-      `INSERT INTO flow_steps (flow_id, step_no, name, approver_type, approver_ref, mode)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO flow_steps (flow_id, step_no, name, approver_type, approver_ref, mode, dept_scoped)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     FLOWS.forEach((f, i) => {
       const flowId = i + 1
       insFlow.run(flowId, f.type, f.name, f.description)
       for (const s of f.steps) {
-        insStep.run(flowId, s.step_no, s.name, s.approver_type, s.approver_ref, s.mode)
+        insStep.run(flowId, s.step_no, s.name, s.approver_type, s.approver_ref, s.mode, s.dept_scoped ? 1 : 0)
       }
     })
 

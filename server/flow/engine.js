@@ -12,6 +12,7 @@
 //
 // 想加新能力时看这里：
 //   · 新审批人类型（如「部门主管」）→ resolveApprovers 加一个分支
+//   · 让某个 role 步骤只限本部门 → flow_steps 加 dept_scoped 列，在 resolveApprovers 的 role 分支按申请人部门过滤
 //   · 加签 / 转交 / 超时自动通过    → 属于 M2/M3，当前刻意不做
 //   · 让 AI 参与审批               → 不做。AI 只做摘要展示（server/lib/ai.js），不碰状态机
 // ============================================================================
@@ -109,16 +110,38 @@ export function resolveApprovers(step, request) {
   }
 
   if (step.approver_type === 'role') {
-    const rows = db
-      .prepare(
-        `SELECT u.id FROM users u
-           JOIN user_roles ur ON ur.user_id = u.id
-           JOIN roles r       ON r.id = ur.role_id
-          WHERE r.code = ? AND u.status = 'active'
-          ORDER BY u.id`,
-      )
-      .all(step.approver_ref)
-    if (!rows.length) throw conflict(`流程步骤「${step.name}」的角色（${step.approver_ref}）下没有在职员工`)
+    // ★ dept_scoped 是「流程步骤」的属性（随快照带入），不是角色表的属性
+    const roleExists = db.prepare(`SELECT 1 AS ok FROM roles WHERE code = ?`).get(step.approver_ref)
+    if (!roleExists) throw conflict(`流程步骤「${step.name}」的角色（${step.approver_ref}）不存在`)
+
+    let sql =
+      `SELECT u.id FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r       ON r.id = ur.role_id
+       WHERE r.code = ? AND u.status = 'active'`
+    const args = [step.approver_ref]
+
+    // ★ 按部门收敛：只取申请人归属部门的该角色员工（避免外部门经理抢批）
+    if (step.dept_scoped) {
+      const applicant = db
+        .prepare(`SELECT id, real_name, dept_id FROM users WHERE id = ?`)
+        .get(request.applicant_id)
+      if (!applicant) throw conflict('申请人不存在')
+      if (applicant.dept_id == null) {
+        throw conflict(`申请人「${applicant.real_name}」没有归属部门，无法确定部门审批人`)
+      }
+      sql += ` AND u.dept_id = ?`
+      args.push(applicant.dept_id)
+    }
+
+    sql += ` ORDER BY u.id`
+    const rows = db.prepare(sql).all(...args)
+    if (!rows.length) {
+      const msg = step.dept_scoped
+        ? `申请人所在部门没有在职的「${step.approver_ref}」审批人`
+        : `流程步骤「${step.name}」的角色（${step.approver_ref}）下没有在职员工`
+      throw conflict(msg)
+    }
     return rows.map((r) => r.id)
   }
 
@@ -186,6 +209,7 @@ export function submitRequest(requestId, userId) {
     approver_type: s.approver_type,
     approver_ref: s.approver_ref,
     mode: s.mode,
+    dept_scoped: s.dept_scoped, // 连同「是否按部门收敛」一起快照，在途单据不被后续模板改动影响
   }))
 
   // 驳回后重提：轮次 +1，上一轮的审批痕迹保留

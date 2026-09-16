@@ -178,14 +178,21 @@ describe('审批引擎', () => {
     expect(detail.body.tasks.find((x) => x.approverId === ID.exeMgr).action).toBe('skip')
   })
 
-  test('★ 或签（any）：任一人批即通过；第二人再批 → 409', async () => {
+  test('★ 或签（any）+ 部门收敛：只有申请人本部门经理能批，外部门经理 403', async () => {
+    // ops1(赵西, dept2) 提交 purchase → 审批人只应是 dept2 经理 opsMgr，不含 exeMgr(dept3)
     const t = await createAndSubmit(app, tokens.ops1, { type: 'purchase', formData: PURCHASE_FORM })
+    const detail = await api(app, tokens.ops1).get(`/api/requests/${t.id}`)
+    const approvers = detail.body.tasks.filter((x) => x.action === null).map((x) => x.approverId)
+    expect(approvers).toEqual([ID.opsMgr]) // 关键：不含跨部门的 exeMgr
+
     const first = await api(app, tokens.opsMgr).post(`/api/requests/${t.id}/approve`, { comment: '同意' })
     expect(first.status).toBe(200)
     expect(first.body.status).toBe('approved') // 单步或签，直接归档
 
+    // 外部门经理根本不在审批人里 → 403（不是 409 已审批），证明按部门收敛生效
     const second = await api(app, tokens.exeMgr).post(`/api/requests/${t.id}/approve`, { comment: '我也同意' })
-    expect(second.status).toBe(409)
+    expect(second.status).toBe(403)
+    expect(second.body.error).toContain('审批人')
   })
 
   // ---------------- 并发 / 重复提交 ----------------
@@ -287,5 +294,76 @@ describe('审批引擎', () => {
     const detail = await api(app, tokens.ops1).get(`/api/requests/${fresh.id}`)
     expect(detail.body.flowSnapshot).toHaveLength(1)
     expect(detail.body.flowSnapshot[0].name).toBe('唯一审批人（新模板）')
+  })
+})
+
+describe('审批人按部门收敛（dept_scoped）', () => {
+  let app
+  let tokens
+  beforeEach(async () => {
+    app = await makeApp()
+    tokens = {
+      admin: await login(app, U.admin),
+      hr: await login(app, U.hr),
+      opsMgr: await login(app, U.opsMgr), // 王东：dept2 经理
+      ops1: await login(app, U.ops1), // 赵西：dept2 员工
+      exeMgr: await login(app, U.exeMgr), // 周大：dept3 经理
+      exe1: await login(app, U.exe1), // 吴小：dept3 员工
+    }
+  })
+  afterEach(async () => {
+    await app.close()
+  })
+
+  test('purchase(dept_scoped=1)：本部门经理收到任务，外部门经理收不到', async () => {
+    const t = await createAndSubmit(app, tokens.ops1, { type: 'purchase', formData: PURCHASE_FORM })
+    const detail = await api(app, tokens.ops1).get(`/api/requests/${t.id}`)
+    const approvers = detail.body.tasks.filter((x) => x.action === null).map((x) => x.approverId)
+    expect(approvers).toEqual([ID.opsMgr]) // dept2 经理，不是 dept3 的 exeMgr
+
+    // 外部门经理的待办里看不到这张单
+    expect((await api(app, tokens.exeMgr).get('/api/todo')).body.items.some((i) => i.requestId === t.id)).toBe(false)
+  })
+
+  test('换部门提交 → 只命中那个部门的经理（证明不是写死 dept2）', async () => {
+    const t = await createAndSubmit(app, tokens.exe1, { type: 'purchase', formData: PURCHASE_FORM })
+    const detail = await api(app, tokens.exe1).get(`/api/requests/${t.id}`)
+    const approvers = detail.body.tasks.filter((x) => x.action === null).map((x) => x.approverId)
+    expect(approvers).toEqual([ID.exeMgr]) // dept3 经理，不是 opsMgr
+  })
+
+  test('material(dept_scoped=0)：跨部门会签仍命中所有部门经理', async () => {
+    const t = await createAndSubmit(app, tokens.ops1, { type: 'material', formData: MATERIAL_FORM })
+    const detail = await api(app, tokens.ops1).get(`/api/requests/${t.id}`)
+    const approvers = detail.body.tasks.filter((x) => x.action === null).map((x) => x.approverId).sort((a, b) => a - b)
+    expect(approvers).toEqual([ID.opsMgr, ID.exeMgr]) // 两个部门经理都会签
+  })
+
+  test('申请人无归属部门 + 部门收敛步骤 → 提交 409（可读提示，非 500）', async () => {
+    // hr 建一个无部门的员工
+    const noDept = await login(app, U.hr)
+    const created = await api(app, noDept).post('/api/users', {
+      username: 'nodept_' + Date.now(),
+      password: 'oa123456',
+      realName: '无部门员工',
+      roles: ['employee'], // 不传 deptId → 归属部门为空
+    })
+    expect(created.status).toBe(201)
+    const tok = await login(app, created.body.username)
+    const c = api(app, tok)
+    const req = await c.post('/api/requests', { type: 'purchase', title: '无部门采购', formData: PURCHASE_FORM })
+    expect(req.status).toBe(201)
+    const submit = await c.post(`/api/requests/${req.body.id}/submit`)
+    expect(submit.status).toBe(409)
+    expect(submit.body.error).toContain('归属部门')
+    // 事务干净回滚，单据仍是草稿
+    const detail = await c.get(`/api/requests/${req.body.id}`)
+    expect(detail.body.status).toBe('draft')
+  })
+
+  test('快照中应包含 dept_scoped 字段', async () => {
+    const t = await createAndSubmit(app, tokens.ops1, { type: 'purchase', formData: PURCHASE_FORM })
+    const detail = await api(app, tokens.ops1).get(`/api/requests/${t.id}`)
+    expect(detail.body.flowSnapshot[0]).toHaveProperty('dept_scoped', 1)
   })
 })

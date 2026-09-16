@@ -116,18 +116,20 @@ describe('权限控制', () => {
     expect((await api(app, tokens.exe1).post('/api/requests/3/approve', { comment: 'x' })).status).toBe(403)
   })
 
-  test('★ 不能审批自己提交的单据（自批）', async () => {
-    // 王东(opsMgr) 自己是 dept_manager，purchase 流程第一级审批人就是 dept_manager → 包含他自己
+  test('★ 自批拦截 + 部门收敛：本人和跨部门的部门经理都批不了', async () => {
+    // opsMgr(王东, dept2) 提交 purchase；purchase 第一步 dept_scoped=1 → 只取 dept2 的经理=他自己
     const t = await createAndSubmit(app, tokens.opsMgr, { type: 'purchase', formData: PURCHASE_FORM })
     expect(t.status).toBe(200)
 
+    // ① 自己不能批自己（防自批）
     const self = await api(app, tokens.opsMgr).post(`/api/requests/${t.id}/approve`, { comment: '自己批自己' })
     expect(self.status).toBe(403)
     expect(self.body.error).toContain('自己')
 
-    // 但别的部门经理批是允许的
+    // ② 跨部门经理也批不了（部门收敛）：exeMgr 是 dept3 的经理，不在 dept2 的审批人里
     const other = await api(app, tokens.exeMgr).post(`/api/requests/${t.id}/approve`, { comment: '同意' })
-    expect(other.status).toBe(200)
+    expect(other.status).toBe(403)
+    expect(other.body.error).toContain('审批人')
   })
 
   test('★ 只有申请人能提交/撤回自己的单据', async () => {

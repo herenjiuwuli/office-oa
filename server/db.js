@@ -28,6 +28,11 @@ export function getDb() {
   _db.exec('PRAGMA foreign_keys = ON;')
   // 建表：schema.sql 里全是 IF NOT EXISTS，可反复执行
   _db.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'))
+  // 迁移：旧库可能没有 dept_scoped 列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列）
+  const flowStepCols = _db.prepare(`PRAGMA table_info(flow_steps)`).all().map((c) => c.name)
+  if (!flowStepCols.includes('dept_scoped')) {
+    _db.exec(`ALTER TABLE flow_steps ADD COLUMN dept_scoped INTEGER NOT NULL DEFAULT 0`)
+  }
   return _db
 }
 

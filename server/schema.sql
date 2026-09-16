@@ -63,10 +63,14 @@ CREATE TABLE IF NOT EXISTS flows (
 );
 
 -- 流程步骤：独立表而不是 steps(JSON)，因为它是「配置数据」（能加外键、能查、能做界面）。
---   approver_type = role    → approver_ref 是角色 code（该角色下所有在职员工都会收到任务）
+--   approver_type = role    → approver_ref 是角色 code（该角色下在职员工会收到任务）
 --   approver_type = user    → approver_ref 是用户 id
 --   approver_type = manager → 取申请人的直属上级（approver_ref 留空）
 --   mode = any（或签：任一人批即过） / all（会签：全批才过，任一人驳回即驳回）
+--   dept_scoped（M2 加）：role 类型是否「只限申请人所在部门」。
+--     0（默认）= 该角色下所有在职员工都收任务（如 material 跨部门会签要两个部门经理都批）；
+--     1         = 只取申请人归属部门的该角色员工（如 purchase 单步或签，避免外部门经理抢批）。
+--     M2 修的「审批人按部门收敛」缺口：原实现 role 类型会跨学科/部门命中所有人。
 CREATE TABLE IF NOT EXISTS flow_steps (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   flow_id       INTEGER NOT NULL REFERENCES flows(id),
@@ -75,6 +79,7 @@ CREATE TABLE IF NOT EXISTS flow_steps (
   approver_type TEXT    NOT NULL CHECK (approver_type IN ('role','user','manager')),
   approver_ref  TEXT    NOT NULL DEFAULT '',
   mode          TEXT    NOT NULL DEFAULT 'any' CHECK (mode IN ('all','any')),
+  dept_scoped   INTEGER NOT NULL DEFAULT 0,
   UNIQUE (flow_id, step_no)
 );
 

@@ -99,7 +99,7 @@ const enabledCount = computed(() => flows.value.filter((f) => f.enabled).length)
                   <td class="t-muted" style="font-size: 12.5px">
                     <template v-if="s.approver_type === 'manager'">取申请人档案里的 manager_id</template>
                     <template v-else-if="s.approver_type === 'role'">
-                      命中该角色的<b>全部在职员工</b>（所以 dept_manager 会跨部门命中，M2 要按部门收敛）
+                      命中该角色的在职员工；<b v-if="s.dept_scoped">只限申请人所在部门</b><span v-else>全部部门（跨部门会签用）</span>
                     </template>
                     <template v-else>指定的某个人（按 user id）</template>
                   </td>
