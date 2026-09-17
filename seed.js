@@ -18,6 +18,7 @@ export const DEFAULT_PASSWORD_LABEL = '统一测试密码'
 const TABLES_TO_CLEAR = [
   'approval_tasks',
   'attachments',
+  'notifications',
   'requests',
   'flow_steps',
   'flows',

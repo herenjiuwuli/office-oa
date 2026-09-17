@@ -15,10 +15,15 @@
 //   · 让某个 role 步骤只限本部门 → flow_steps 加 dept_scoped 列，在 resolveApprovers 的 role 分支按申请人部门过滤
 //   · 加签 / 转交 / 超时自动通过    → 属于 M2/M3，当前刻意不做
 //   · 让 AI 参与审批               → 不做。AI 只做摘要展示（server/lib/ai.js），不碰状态机
+//
+// ⚠️ 引擎里的每个状态变更都配了一条**站内通知**（M3），且都写在
+//    「已经 BEGIN 的事务里」—— 加新分支时别忘了配套的通知，否则又会出现
+//    「状态变了但没人知道」。通知文案与取舍见 server/lib/notify.js。
 // ============================================================================
 import { getDb } from '../db.js'
 import { badRequest, conflict, forbidden, notFound } from '../errors.js'
 import { logAction } from '../audit.js'
+import { notifyCancelled, notifyResult, notifyTaskAssigned } from '../lib/notify.js'
 
 const SUBMITTABLE = ['draft', 'rejected']
 const CANCELLABLE = ['draft', 'pending']
@@ -241,6 +246,14 @@ export function submitRequest(requestId, userId) {
     ).run(snapshot[0].step_no, nextRound, JSON.stringify(snapshot), requestId)
 
     insertTasks(requestId, snapshot[0], approvers, nextRound)
+    // ★ 通知写在**同一个事务里**：审批状态改了、通知却没落地的话，
+    //   审批人永远不知道自己有单要批 —— 这类「主操作成功、副作用丢失」不会报错，只会漏。
+    notifyTaskAssigned(db, {
+      request: req,
+      stepName: snapshot[0].name,
+      round: nextRound,
+      approverIds: approvers,
+    })
     db.exec('COMMIT')
   } catch (e) {
     db.exec('ROLLBACK')
@@ -297,6 +310,9 @@ export function actOnRequest(requestId, userId, action, comment = '') {
     .get(requestId, step.step_no, req.round, userId)
   if (!task) throw forbidden('你不是当前步骤的审批人')
 
+  // 通知正文里要写「谁批的」，这里一次性取出，省得前端再回查
+  const actorName = db.prepare(`SELECT real_name FROM users WHERE id = ?`).get(userId)?.real_name || ''
+
   let outcome = null
 
   db.exec('BEGIN')
@@ -326,6 +342,14 @@ export function actOnRequest(requestId, userId, action, comment = '') {
       closeRemainingTasks(requestId, step.step_no, req.round)
       db.prepare(`UPDATE requests SET status = 'rejected', updated_at = datetime('now') WHERE id = ?`).run(requestId)
       outcome = 'rejected'
+      notifyResult(db, {
+        request: req,
+        round: req.round,
+        ok: false,
+        stepName: step.name,
+        comment: String(comment || ''),
+        actorName,
+      })
     } else if (passed) {
       closeRemainingTasks(requestId, step.step_no, req.round)
       const nextStep = snapshot.find((s) => s.step_no > step.step_no)
@@ -338,10 +362,25 @@ export function actOnRequest(requestId, userId, action, comment = '') {
         )
         insertTasks(requestId, nextStep, approvers, req.round)
         outcome = 'advanced'
+        // 推进到谁、就通知谁（上一级的任务已由 closeRemainingTasks 关掉）
+        notifyTaskAssigned(db, {
+          request: req,
+          stepName: nextStep.name,
+          round: req.round,
+          approverIds: approvers,
+        })
       } else {
         // ⑥-c 最后一步通过 → 归档
         db.prepare(`UPDATE requests SET status = 'approved', updated_at = datetime('now') WHERE id = ?`).run(requestId)
         outcome = 'approved'
+        notifyResult(db, {
+          request: req,
+          round: req.round,
+          ok: true,
+          stepName: step.name,
+          comment: String(comment || ''),
+          actorName,
+        })
       }
     }
     // passed === false（会签还没集齐）→ 保持 pending，什么都不做
@@ -375,6 +414,13 @@ export function cancelRequest(requestId, userId) {
     throw conflict(`单据当前状态为「${req.status}」，不可撤回`)
   }
 
+  // ★ 顺序要紧：撤回会把待审任务改成 skip，改完就再也查不出「原本该收到通知的人」。
+  //   所以「谁还有未审任务」必须在 UPDATE 之前取出来。
+  const pendingApprovers = db
+    .prepare(`SELECT DISTINCT approver_id FROM approval_tasks WHERE request_id = ? AND action IS NULL`)
+    .all(requestId)
+    .map((r) => r.approver_id)
+
   db.exec('BEGIN')
   try {
     db.prepare(`UPDATE requests SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`).run(requestId)
@@ -383,6 +429,14 @@ export function cancelRequest(requestId, userId) {
       `UPDATE approval_tasks SET action = 'skip', acted_at = datetime('now')
         WHERE request_id = ? AND action IS NULL`,
     ).run(requestId)
+
+    // 只通知「还没处理的人」—— 已经批过/驳过的人不需要知道这条单据被撤回了
+    notifyCancelled(db, {
+      request: req,
+      round: req.round,
+      approverIds: pendingApprovers,
+      applicantName: req.applicant_name,
+    })
     db.exec('COMMIT')
   } catch (e) {
     db.exec('ROLLBACK')

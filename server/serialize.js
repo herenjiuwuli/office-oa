@@ -72,6 +72,21 @@ export function serializeTask(row) {
   }
 }
 
+export function serializeNotification(row) {
+  return {
+    id: row.id,
+    type: row.type, // task | approved | rejected | cancelled
+    title: row.title,
+    body: row.body,
+    requestId: row.request_id ?? null,
+    // round 是**事件发生时的快照**，不是 current round —— 单据重提后这条通知不该改口
+    round: row.round,
+    read: !!row.read_at,
+    readAt: row.read_at ?? null,
+    createdAt: row.created_at,
+  }
+}
+
 export function serializeAttachment(row) {
   return {
     id: row.id,

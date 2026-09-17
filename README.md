@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · **M3 站内通知完成**：消息中心 + 收件人隔离 + 引擎同事务挂钩）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -29,7 +29,7 @@
 | 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **161 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **184 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -54,7 +54,7 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 161 条接口用例
+npm test                            # ② 跑全部 184 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
@@ -116,6 +116,10 @@ node seed.js --force
 | GET | `/api/attachments/:id` | 能从详情看到该单据的人 | 下载附件（**要带 token**，不是静态直链） |
 | DELETE | `/api/attachments/:id` | 上传者本人 + 可编辑态 | 删除附件 |
 | GET | `/api/todo` | 登录 | 我的待办 |
+| GET | `/api/notifications` | 登录（只看自己） | 我的通知列表（`?unread=1` 只看未读；`?limit=` 分页） |
+| GET | `/api/notifications/unread-count` | 登录（只看自己） | 未读数，给页头角标 |
+| POST | `/api/notifications/:id/read` | 登录（只看自己） | 标记单条已读（**幂等**；别人的 / 不存在的统一 404） |
+| POST | `/api/notifications/read-all` | 登录（只看自己） | 全部标为已读 |
 | GET | `/api/announcements` | 登录 | 公告列表 |
 | POST | `/api/announcements` | `announcement:write` | 发公告 |
 | GET | `/api/audit-logs` | `audit:read` | 审计日志 |
@@ -244,6 +248,19 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 
 ---
 
+### 8. ⭐ 站内通知：事件发生时写下的那句话（M3）
+
+通知不是「指向单据的视图」，而是**事件发生时写下的快照**：
+
+- **`round` 是抄下来的，不是现查的**：驳回通知写「第 1 轮被驳回」，申请人重提到第 2 轮后，这条老通知**不会自己改口**。否则「第 1 轮被驳回」会变成「第 2 轮被驳回」，历史被悄悄篡改（和 `flow_snapshot`、平台环境快照是同一教训的第三次出现）。
+- **写通知必须在状态变更的同事务里**：审批 COMMIT 了、通知才补写失败 → 用户永远不知道自己被驳回，且不报错，只会「少收到东西」。所以 `notify.js` 只负责 `INSERT`，事务边界由 `flow/engine.js` 掌握。
+- **收件人隔离靠 SQL 层 `user_id = 当前用户`，不靠权限码** —— 通知是纯私有资源，没有「可见但无权限」的中间态；别人的 / 不存在的统一 404，不泄漏存在性（和引擎「授权先于状态」同一取舍）。
+- **不给自己发通知**：审批人恰好是申请人这类配置错误，不该变成对自己的骚扰。
+
+23 条接口用例 + 真机 54 条断言覆盖：挂钩触发、收件人隔离、轮次快照、标已读幂等、写路径 404。
+
+---
+
 ## 测试（三层）
 
 ```bash
@@ -253,8 +270,8 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **161 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
-| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **36 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
+| ② 接口测试 | `npm test` | **184 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
+| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **54 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）。
@@ -262,7 +279,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **161 条用例，7 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）
+- **184 条用例，8 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -274,7 +291,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ```bash
 npm start                        # 或 npm run dev（dev 时改传 http://127.0.0.1:5273）
-node scripts/oa-ui-check.mjs     # 36 条断言，走一段就全过
+node scripts/oa-ui-check.mjs     # 54 条断言，走一段就全过
 ```
 
 用系统已装的 Chrome + Node 内置 WebSocket 直连 CDP，**不下载 Chromium、零 npm 依赖**。断言按业务语义写，覆盖：
@@ -297,7 +314,7 @@ node scripts/oa-ui-check.mjs     # 36 条断言，走一段就全过
 1. **登录页旁边渲染出了侧边栏**（`App.vue` 无条件套外壳）——当时所有接口用例和静态扫描全绿，**因为断言只看了 pathname 和按钮，没看布局**；
 2. **归档单据上给已审过的审批人显示了「但当前还没轮到你」**——文案分支顺序写反了，单据都结束了还说"没轮到你"。
 
-这两条都不是「代码报错」，是 36 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
+这两条都不是「代码报错」，是 54 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
 
 ---
 
@@ -314,7 +331,7 @@ npm run verify          # 本地一条命令复现整条 CI：静态扫描 → �
 | | `scripts/oa-ui-check.mjs`（自写 CDP） | `e2e/`（Playwright） |
 |---|---|---|
 | 依赖 | **零**，系统 Chrome + Node 内置 WebSocket | 需装 `@playwright/test` |
-| 断言/重试/报告 | 自己写（36 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
+| 断言/重试/报告 | 自己写（54 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
 | 失败留痕 | 只有控制台输出 | trace 可回放 + 失败截图 |
 | 定位 | **本机随手验一遍**（离线也能跑） | **接 CI 做回归** |
 
@@ -458,7 +475,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（161 条）
+3. **接口测试** `npm test`（184 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
@@ -500,7 +517,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 | 考勤打卡 / 统计报表 | 与审批流主干无关，属纯 CRUD |
 | 文件附件上传 | M1 用「链接字段」代替；**M2 已补**（见「附件上传」一节） |
 | AI 审批摘要 | M1 不做；**M2 已补**（见「AI 审批摘要」一节）。它是**可选能力**，没配 key 会自动降级，不影响任何主流程 |
-| 消息通知（站内信 / 邮件） | 待办列表已能替代 |
+| 消息通知（站内信 / 邮件） | **M3 已补**：站内通知（消息中心 + 收件人隔离 + 引擎同事务挂钩），见「站内通知（M3）」一节 |
 | 组织架构拖拽排序 | M1 用 `sort` 数字字段 |
 | Playwright E2E | M1 不做；**M2 已补**（见「UI 自动化」一节）。M1 用自写的零依赖 CDP 脚本覆盖了同样的链路 |
 | Docker / 上线部署 | 见安全红线 |
@@ -515,7 +532,11 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 5. ✅ **附件上传** —— `server/lib/storage.js` + `server/routes/attachments.js` + 前端附件卡片 + **17 条接口用例 + 1 条 E2E**。见「附件上传」一节
 6. ✅ **token 黑名单 / 主动失效** —— 登出把 token 的 `jti` 写进 `token_blacklist`，守卫命中即 401。见「关键设计决策」第 7 条
 
-> **M2 全部完成。**
+### M3 进度
+
+1. ✅ **站内通知（消息中心）** —— `server/lib/notify.js`（引擎同事务挂钩：提交发「待你审批」、归档/驳回发「结果」、撤回发「已撤回」）+ `server/routes/notifications.js`（收件人隔离、标已读幂等、写路径统一 404）+ 前端 `Notifications.vue` + 侧边栏未读角标（跨组件共享 `reactive` 状态，标已读当场 -1 不用刷新）。见「站内通知（M3）」一节
+
+> **M2 + M3 全部完成。**
 
 ---
 
@@ -572,7 +593,7 @@ office-oa/
 │     └─ views/                 11 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 7 个测试文件（161 用例）
+├─ tests/                       setup + helpers + 8 个测试文件（184 用例）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）

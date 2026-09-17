@@ -4,6 +4,7 @@ import { isLoggedIn } from './store.js'
 import Home from './views/Home.vue'
 import Login from './views/Login.vue'
 import Todo from './views/Todo.vue'
+import Notifications from './views/Notifications.vue'
 import Requests from './views/Requests.vue'
 import RequestNew from './views/RequestNew.vue'
 import RequestDetail from './views/RequestDetail.vue'
@@ -20,6 +21,7 @@ const router = createRouter({
 
     { path: '/', component: Home },
     { path: '/todo', component: Todo },
+    { path: '/notifications', component: Notifications },
 
     { path: '/requests', component: Requests },
     { path: '/requests/new', component: RequestNew }, // 放在 :id 之前，避免 /new 被当成 id

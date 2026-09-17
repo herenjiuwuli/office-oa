@@ -17,6 +17,7 @@ import userRoutes from './server/routes/users.js'
 import requestRoutes from './server/routes/requests.js'
 import attachmentRoutes from './server/routes/attachments.js'
 import todoRoutes from './server/routes/todo.js'
+import notificationRoutes from './server/routes/notifications.js'
 import announcementRoutes from './server/routes/announcements.js'
 import auditLogRoutes from './server/routes/auditLogs.js'
 import aiRoutes from './server/routes/ai.js'
@@ -53,6 +54,7 @@ export function buildApp({ serveStatic = true } = {}) {
   app.register(requestRoutes)
   app.register(attachmentRoutes)
   app.register(todoRoutes)
+  app.register(notificationRoutes)
   app.register(announcementRoutes)
   app.register(auditLogRoutes)
   app.register(aiRoutes)

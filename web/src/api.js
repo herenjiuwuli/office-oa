@@ -81,6 +81,15 @@ export const api = {
   // --- 待办 ---
   todo: () => request('/todo'),
 
+  // --- 站内通知（M3）---
+  // 不需要任何权限码：通知是「我自己的东西」，后端按 user_id 强制过滤。
+  notifications: {
+    list: (query) => request('/notifications', { query }),
+    unreadCount: () => request('/notifications/unread-count'),
+    read: (id) => request(`/notifications/${id}/read`, { method: 'POST', body: {} }),
+    readAll: () => request('/notifications/read-all', { method: 'POST', body: {} }),
+  },
+
   // --- 附件（M2）---
   // 上传/下载不能走上面的 request()：上传要 multipart（不是 JSON），
   // 下载要拿二进制 blob，而且**必须带 Authorization 头**（所以不能用裸 <a href>）。

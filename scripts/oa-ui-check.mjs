@@ -1,5 +1,6 @@
 // ============================================================================
-// 真机浏览器验收：把一张单据从「提交」跑到「归档」，再跑一遍「驳回 → 重提」。
+// 真机浏览器验收：把一张单据从「提交」跑到「归档」，再跑一遍「驳回 → 重提」，
+// 最后验证消息中心（站内通知）的角标同步与轮次快照。
 //
 // 零依赖：用系统已装的 Chrome + Node 内置 WebSocket 直连 CDP（不下载 Chromium）。
 // 前提：Node >= 21（全局 WebSocket）+ 已安装 Chrome。
@@ -250,6 +251,34 @@ async function goDetail(cdp, id) {
   )
 }
 
+/** 消息中心（M3）。同样要等**异步列表**到位，不能 nav 完就断言。 */
+async function goNotifications(cdp) {
+  await cdp.nav(`${BASE}/notifications`)
+  await cdp.waitFor(
+    `window.__t.text().includes('消息中心') &&
+     (document.querySelectorAll('table.tbl tbody tr').length > 0 ||
+      window.__t.text().includes('还没有任何消息') ||
+      window.__t.text().includes('没有未读消息'))`,
+    '消息中心加载完成',
+  )
+}
+
+/** 取出「某张单据」在消息中心里的所有行文本（新在前） */
+const notifRows = (cdp, titleText) =>
+  cdp.eval(
+    `[...document.querySelectorAll('table.tbl tbody tr')]
+       .filter(x => x.textContent.includes(${JSON.stringify(titleText)}))
+       .map(x => x.innerText)`,
+  )
+
+/** 读侧边栏未读角标的数字（没有角标 = 0） */
+const unreadBadge = async (cdp) => {
+  const t = await cdp.eval(
+    `(document.querySelector('.nav-item[href="/notifications"] .nav-badge') || {}).textContent || ''`,
+  )
+  return Number(String(t).trim() || 0)
+}
+
 const reason = (n) => `UI 验收第 ${n} 步：家中有事需要请假`
 
 async function scenario(cdp) {
@@ -397,11 +426,92 @@ async function scenario(cdp) {
   check('重提后状态回到「审批中」', dText.includes('审批中'))
   check('★ 上一轮驳回痕迹保留（第 1 轮记录还在）', seps[0].includes('第 1 轮') && dText.includes('材料不齐'))
 
+  console.log('\n--- G2. 消息中心（M3 站内通知）---')
+  // 此刻 ops02（申请人赵西）刚在第 G 节被驳回、又重提过 —— 他的收件箱里应该有一条
+  // 「被驳回（第 1 轮）」的通知，而单据本身已经是第 2 轮了。这正是快照要证明的东西。
+  await goNotifications(cdp)
+
+  const myRows = await notifRows(cdp, title2)
+  check(`消息中心出现本单的驳回通知（${title2}）`, myRows.length >= 1, `匹配 ${myRows.length} 行`)
+  check('通知类型徽标为「已驳回」', (myRows[0] || '').includes('已驳回'), (myRows[0] || '').slice(0, 70))
+  check('通知正文带回驳回理由（不用点进单据也知道为什么被驳）', (myRows[0] || '').includes('材料不齐'))
+  check('通知正文写清「谁驳回的」（王东）', (myRows[0] || '').includes('王东'))
+  // ★ 关键：这条通知发生在第 1 轮，而单据已经重提到第 2 轮 —— 历史通知不许跟着改口
+  check('★ 这条通知仍写「第 1 轮」（事件快照），而单据此刻已是第 2 轮', (myRows[0] || '').includes('第 1 轮'))
+
+  // 与单据详情对一次账，证明上面那条不是碰巧（单据确实已经是第 2 轮）
+  await goDetail(cdp, reqId2)
+  const sepsNow = await cdp.eval(`[...document.querySelectorAll('.round-sep')].map(e => e.textContent.trim())`)
+  check(
+    '对照：单据详情时间线已推进到第 2 轮',
+    sepsNow.some((s) => s.includes('第 2 轮')),
+    JSON.stringify(sepsNow),
+  )
+
+  // ★ 角标 = 全量未读数（不是「本页有几条未读」），且跨组件同步
+  await goNotifications(cdp)
+  const badge1 = await unreadBadge(cdp)
+  check('侧边栏「消息中心」出现未读角标', badge1 > 0, '角标 = ' + badge1)
+
+  await cdp.eval(`window.__t.click('未读')`)
+  await sleep(700)
+  const unreadRows = await cdp.eval(`document.querySelectorAll('table.tbl tbody tr').length`)
+  check(
+    '「未读」筛选：行数 = 角标数字（页面 limit 50，超过时按 50 截断）',
+    unreadRows === Math.min(badge1, 50),
+    `行数 ${unreadRows} / 角标 ${badge1}`,
+  )
+
+  const marked = await cdp.eval(`window.__t.clickInRow(${JSON.stringify(title2)}, '标为已读')`)
+  check('在未读列表里点「标为已读」', marked === 'CLICKED', marked)
+  await sleep(700)
+  const badge2 = await unreadBadge(cdp)
+  check(
+    '★ 标为已读后侧边栏角标当场 -1（跨组件共享状态真同步，不用刷新页面）',
+    badge2 === badge1 - 1,
+    `${badge1} → ${badge2}`,
+  )
+  check('单条已读后该消息从「未读」列表消失', !(await cdp.eval(`window.__t.text()`)).includes(title2))
+
+  await cdp.eval(`window.__t.click('全部标为已读')`)
+  await sleep(900)
+  check('★ 「全部标为已读」后侧边栏角标消失', (await unreadBadge(cdp)) === 0)
+  const markBtns = await cdp.eval(
+    `[...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '标为已读').length`,
+  )
+  check('全部已读后列表里「标为已读」按钮数 = 0', markBtns === 0, '实际 ' + markBtns)
+
+  await cdp.eval(`window.__t.click('全部')`)
+  await sleep(700)
+  check('「全部」里历史消息仍在（已读 ≠ 删除）', await cdp.eval(`window.__t.text().includes(${JSON.stringify(title2)})`))
+  check(
+    '★ 申请人看不到任何「待你审批」通知（收件人隔离，不是靠前端过滤）',
+    !(await cdp.eval(`window.__t.text()`)).includes('待你审批'),
+  )
+
+  // 审批人侧：同一张单据的「第 1 轮」与「第 2 轮」两条待审批通知应当并存、各自写着当时的轮次
+  await logout(cdp)
+  await loginAs(cdp, 'ops01')
+  await goNotifications(cdp)
+  const mgrRows = await notifRows(cdp, title2)
+  check('审批人王东收到该单据的「待你审批」通知', mgrRows.length >= 1, `匹配 ${mgrRows.length} 行`)
+  check(
+    '★ 两轮通知并存（新在前）：第 2 轮 / 第 1 轮各一条，互不覆盖',
+    mgrRows.length === 2 && mgrRows[0].includes('第 2 轮') && mgrRows[1].includes('第 1 轮'),
+    `共 ${mgrRows.length} 行 · ` + mgrRows.map((r) => (r.includes('第 2 轮') ? '第2轮' : r.includes('第 1 轮') ? '第1轮' : '?')).join(','),
+  )
+
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   await goDetail(cdp, reqId2)
   const ov = await cdp.eval(`window.__t.overflow()`)
   check('390px 无横向溢出', !ov.overflow, `scrollWidth=${ov.scrollWidth} clientWidth=${ov.clientWidth}`)
+
+  // 新增的消息中心也要过一遍 —— 一个带 5 列的表格在窄屏上很容易撑破
+  await goNotifications(cdp)
+  const ov2 = await cdp.eval(`window.__t.overflow()`)
+  check('消息中心 390px 无横向溢出', !ov2.overflow, `scrollWidth=${ov2.scrollWidth} clientWidth=${ov2.clientWidth}`)
+
   await cdp.send('Emulation.clearDeviceMetricsOverride')
 
   console.log('\n--- I. 退出登录 ---')

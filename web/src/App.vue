@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from './api.js'
-import { can, clearSession, session } from './store.js'
+import { can, clearSession, inbox, session, setUnread } from './store.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,9 +14,14 @@ const user = computed(() => session.user)
 // 目的很实际 —— 审批人得一眼看到「有几单等我」。
 const todoCount = ref(0)
 
-async function refreshTodo() {
+// 未读通知数用 store 里的共享状态（不是本组件的 ref）：
+// 消息中心页「标为已读」之后要同步这个角标，谁写谁 set —— 见 store.js 的注释。
+const unreadCount = computed(() => inbox.unread)
+
+async function refreshBadges() {
   if (!session.token) {
     todoCount.value = 0
+    setUnread(0)
     return
   }
   try {
@@ -25,10 +30,16 @@ async function refreshTodo() {
   } catch {
     todoCount.value = 0 // 角标失败不该打扰用户
   }
+  try {
+    const res = await api.notifications.unreadCount()
+    setUnread(res.unread)
+  } catch {
+    setUnread(0)
+  }
 }
 
-onMounted(refreshTodo)
-watch(() => route.path, refreshTodo)
+onMounted(refreshBadges)
+watch(() => route.path, refreshBadges)
 
 async function onLogout() {
   try {
@@ -69,6 +80,10 @@ const isLogin = computed(() => route.path === '/login')
           <router-link to="/todo" class="nav-item" :class="{ active: isActive('/todo') }">
             <span>我的待办</span>
             <span v-if="todoCount" class="nav-badge">{{ todoCount }}</span>
+          </router-link>
+          <router-link to="/notifications" class="nav-item" :class="{ active: isActive('/notifications') }">
+            <span>消息中心</span>
+            <span v-if="unreadCount" class="nav-badge">{{ unreadCount }}</span>
           </router-link>
         </div>
 

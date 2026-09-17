@@ -150,6 +150,30 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 站内通知（M3）：把「待你审批」「你的单据通过了/被驳回了」「单据被撤回了」这些
+-- **已经发生的事件**写下来供人回看。
+--
+-- ★ 为什么是「独立的一张表」而不是「按 approval_tasks 实时 join 出来的视图」：
+--   ① round 是**事件发生时的快照**：单据驳回后重提会 +1，若实时 join，
+--      「第 1 轮被驳回」这条历史通知会自己改口成第 2 轮（同 flow_snapshot 一条教训）；
+--   ② 撤回会把待审任务改成 skip、重提会新增任务行 —— join 出来的「事件」会凭空出现或消失；
+--   ③ read_at（已读）只属于「通知」本身，从单据/任务里推导不出来。
+--   所以：通知是**当时写下的那句话**，不是指向单据的视图。
+--
+-- ★ 写入必须与状态变更**在同一个事务里**（见 server/lib/notify.js 与 flow/engine.js）：
+--   审批已经 COMMIT、通知才补写失败的话，用户永远不知道自己被驳回了。
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),   -- 收件人
+  type       TEXT    NOT NULL CHECK (type IN ('task','approved','rejected','cancelled')),
+  title      TEXT    NOT NULL,
+  body       TEXT    NOT NULL DEFAULT '',
+  request_id INTEGER REFERENCES requests(id),
+  round      INTEGER NOT NULL DEFAULT 1,              -- ★ 事件发生时的轮次快照
+  read_at    TEXT,                                    -- NULL = 未读
+  created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- 审计日志：只记关键操作（登录、增删改、审批）。是测「审计完整性」的靶子。
 CREATE TABLE IF NOT EXISTS audit_logs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,6 +194,9 @@ CREATE INDEX IF NOT EXISTS idx_task_pending    ON approval_tasks(approver_id, ac
 CREATE INDEX IF NOT EXISTS idx_log_user        ON audit_logs(user_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_attach_request  ON attachments(request_id, id);
+
+-- 收件箱：按「谁的 + 读没读 + 新在前」查，正好是列表与未读数的形状
+CREATE INDEX IF NOT EXISTS idx_notif_inbox     ON notifications(user_id, read_at, id);
 
 -- Token 黑名单（M2）：JWT 本是无状态的，服务端没法主动销毁会话，
 -- 所以「登出」原本只是前端丢掉 token —— 旧 token 在 24h 过期前仍能用，等于没登出。

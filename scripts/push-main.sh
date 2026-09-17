@@ -68,7 +68,7 @@ remote_sha() {  # 直接问 GitHub API，不信 git 的本地记录；三条通�
 }
 
 try_channel() {  # $1 = 代理地址（空串 = 直连）
-  local proxy="$1" label PROXY got
+  local proxy="$1" label PROXY
   if [ -z "$proxy" ]; then
     label="直连"; PROXY=(-c http.proxy= -c https.proxy=)
   else
@@ -84,7 +84,14 @@ try_channel() {  # $1 = 代理地址（空串 = 直连）
     -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
     push -u origin main 2>&1 | tail -6
 
-  got=$(remote_sha)
+  # GitHub API 读 refs 有秒级延迟：push 刚成功时立刻查可能拿到的还是旧 sha → 误判成失败，
+  # 然后白白多试一条通道（实测踩过：直连已推成功，却被判失败又走了代理）。所以要重试几次再下结论。
+  local i got=""
+  for i in 1 2 3; do
+    got=$(remote_sha)
+    [ "$got" = "$LOCAL_SHA" ] && break
+    sleep 2
+  done
   echo "   远端 main = ${got:-<取不到>}"
   if [ "$got" = "$LOCAL_SHA" ]; then
     echo "推送成功（$label）"

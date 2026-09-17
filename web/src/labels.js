@@ -28,6 +28,17 @@ export const MODE = {
   all: '会签',
 }
 
+// 站内通知类型（M3）。配色直接复用单据状态的 st-* 类 —— 同一个语义（通过/驳回/撤回）
+// 在两个地方用不同颜色会让人以为它们不是一回事。
+export const NOTIFY = {
+  task: { text: '待审批', cls: 'st-pending' },
+  approved: { text: '已通过', cls: 'st-approved' },
+  rejected: { text: '已驳回', cls: 'st-rejected' },
+  cancelled: { text: '已撤回', cls: 'st-cancelled' },
+}
+export const notifyText = (t) => NOTIFY[t]?.text || t
+export const notifyCls = (t) => NOTIFY[t]?.cls || 'st-draft'
+
 export const statusText = (s) => STATUS[s]?.text || s
 export const statusCls = (s) => STATUS[s]?.cls || 'st-draft'
 export const actionText = (a) => (a ? ACTION[a]?.text || a : '待审')
