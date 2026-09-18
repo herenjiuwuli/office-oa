@@ -68,6 +68,10 @@ async function onExport() {
 }
 
 onMounted(async () => {
+  // 有 request:read:all 的人默认看「全部单据」——页面文案承诺的是这个（横向越权的对照组）。
+  // 之前默认挂在「只看我的」：admin 打开是 0 条，文案却说要切到全部，属于文案与行为打架。
+  // 普通员工没有这个权限，保持「只看我的」不变（下拉也不渲染）。
+  if (canSeeAll.value) filters.mine = '0'
   await loadTypes()
   await load()
 })

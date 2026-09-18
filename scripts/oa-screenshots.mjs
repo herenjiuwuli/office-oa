@@ -249,14 +249,45 @@ try {
   await sleep(400)
   await cdp.shot('09-越权-后端真实403.png')
 
-  // 10) 移动端（真改视口）
+  // 11) 消息中心（M3）：站内通知 + 收件人隔离
+  await cdp.eval(`window.__s.click('退出登录')`)
+  await waitFor(cdp, `location.pathname === '/login'`, '登出')
+  await loginAs(cdp, 'admin')
+  await cdp.nav(`${BASE}/notifications`, `!!document.querySelector('.card')`)
+  await cdp.eval(HELPERS)
+  await waitFor(
+    cdp,
+    `document.querySelectorAll('table.tbl tbody tr').length > 0 || !!document.querySelector('.empty')`,
+    '消息中心渲染',
+  )
+  await sleep(400)
+  await cdp.shot('11-消息中心-M3.png')
+
+  // 12) 单据中心（M4 的导出按钮在这里）；admin 有 request:read:all，能看到全量
+  // 就绪条件要**页面专属**：等「导出 CSV」按钮出现，比等「表格里有行」稳
+  // （表格有行可能是上一条路由留下的旧 DOM）—— oa-ui-check.mjs 里踩过一次
+  await cdp.nav(
+    `${BASE}/requests`,
+    `[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '导出 CSV')`,
+  )
+  await cdp.eval(HELPERS)
+  await sleep(300)
+  await cdp.shot('12-单据中心-导出CSV-M4.png')
+
+  // 13) 审计日志：导出是数据外带动作，必须留痕 —— admin 才有的 audit:read
+  await cdp.nav(`${BASE}/audit-logs`, `document.querySelectorAll('table.tbl tbody tr').length > 0`)
+  await cdp.eval(HELPERS)
+  await sleep(400)
+  await cdp.shot('13-审计日志.png')
+
+  // 14) 移动端（真改视口）
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: 390, height: 844, deviceScaleFactor: 2, mobile: true,
   })
   await cdp.nav(`${BASE}/`, `!!document.querySelector('.sidebar')`)
   await cdp.eval(HELPERS)
   await sleep(400)
-  await cdp.shot('10-移动端390.png')
+  await cdp.shot('14-移动端390.png')
   await cdp.send('Emulation.clearDeviceMetricsOverride')
 
   console.log('\n完成。')
