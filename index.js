@@ -20,6 +20,7 @@ import todoRoutes from './server/routes/todo.js'
 import notificationRoutes from './server/routes/notifications.js'
 import announcementRoutes from './server/routes/announcements.js'
 import auditLogRoutes from './server/routes/auditLogs.js'
+import meetingRoutes from './server/routes/meetings.js'
 import aiRoutes from './server/routes/ai.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -57,6 +58,7 @@ export function buildApp({ serveStatic = true } = {}) {
   app.register(notificationRoutes)
   app.register(announcementRoutes)
   app.register(auditLogRoutes)
+  app.register(meetingRoutes)
   app.register(aiRoutes)
 
   // 前端构建产物（web/dist）。没构建过就跳过 —— 后端依然能独立当 API 服务用。

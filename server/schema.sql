@@ -211,4 +211,51 @@ CREATE TABLE IF NOT EXISTS token_blacklist (
   created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ===== M5 会议室预订 =====
+-- 会议室。时段是「独占资源」：同一间房同一时段只能有一个预订。
+CREATE TABLE IF NOT EXISTS meeting_rooms (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL UNIQUE,
+  location   TEXT    NOT NULL DEFAULT '',
+  capacity   INTEGER NOT NULL DEFAULT 10,
+  status     TEXT    NOT NULL DEFAULT 'active',     -- active | disabled
+  created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 预订单。时间不做字符串比较，一律折算成 **30 分钟槽序号**（距 00:00）：
+--   08:00 → 16，09:30 → 19，22:00 → 44。左闭右开 [start_slot, end_slot)。
+-- 这么存有三个好处：① 重叠判断变成整数区间比较，不用解析时间字符串；
+-- ② 跨语言/跨时区没有歧义；③ 与下面的占用表共用同一套坐标。
+-- ⚠️ 明确边界：**不支持跨天**（22:00–次日 02:00 这种不收），date 只存一天。
+CREATE TABLE IF NOT EXISTS room_bookings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_id      INTEGER NOT NULL REFERENCES meeting_rooms(id),
+  user_id      INTEGER NOT NULL REFERENCES users(id),
+  date         TEXT    NOT NULL,                    -- YYYY-MM-DD
+  start_slot   INTEGER NOT NULL,
+  end_slot     INTEGER NOT NULL,                    -- 不含
+  title        TEXT    NOT NULL,
+  status       TEXT    NOT NULL DEFAULT 'booked',   -- booked | cancelled
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  cancelled_at TEXT
+);
+
+-- ★★ 占用表 = M5 的并发防线。一行 = 一个被占用的 30 分钟槽。
+--    PRIMARY KEY (room_id, date, slot) 就是「同一间房同一天同一槽只能有一行」，
+--    **冲突由数据库唯一约束兜底**，不靠应用层「先查再插」。
+--    为什么不用「查重叠再插入」：那套在应用层看起来对，但一旦将来加入 await、
+--    多进程或第二个写入口，「查」和「插」之间就存在窗口；而唯一约束无论谁写、
+--    怎么写、怎么写错，都挡得住。代价是多一张表，且写入要在一个事务里做。
+--    WITHOUT ROWID：这张表没有自己的 rowid 需求，主键就是全部内容，省一层间接。
+CREATE TABLE IF NOT EXISTS room_slots (
+  room_id    INTEGER NOT NULL REFERENCES meeting_rooms(id),
+  date       TEXT    NOT NULL,
+  slot       INTEGER NOT NULL,
+  booking_id INTEGER NOT NULL REFERENCES room_bookings(id),
+  PRIMARY KEY (room_id, date, slot)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_booking_room_date ON room_bookings(room_id, date, status);
+CREATE INDEX IF NOT EXISTS idx_booking_user      ON room_bookings(user_id, date);
+
 CREATE INDEX IF NOT EXISTS idx_blacklist_user ON token_blacklist(user_id);

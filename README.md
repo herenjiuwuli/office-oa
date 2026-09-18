@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · M3 站内通知完成：消息中心 + 收件人隔离 + 引擎同事务挂钩 · **M4 单据导出 CSV 完成**：自写 CSV 转义 + ⭐公式注入防护 + BOM + 只导出你有权看到的，并**倒逼测试平台补出「断言响应头」能力**）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · M3 站内通知完成：消息中心 + 收件人隔离 + 引擎同事务挂钩 · **M4 单据导出 CSV 完成**：自写 CSV 转义 + ⭐公式注入防护 + BOM + 只导出你有权看到的，并**倒逼测试平台补出「断言响应头」能力** · **M5 会议室预订完成**：30 分钟槽模型 + ⭐冲突防线下沉到数据库唯一约束）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -29,7 +29,7 @@
 | 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **204 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **229 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -54,7 +54,7 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 204 条接口用例
+npm test                            # ② 跑全部 229 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
@@ -110,6 +110,12 @@ node seed.js --force
 | POST | `/api/requests/:id/approve` | 当前步审批人 | 同意 |
 | POST | `/api/requests/:id/reject` | 当前步审批人 | 驳回（带批注） |
 | POST | `/api/requests/:id/cancel` | 申请人 | 撤回（草稿 / 审批中可撤回） |
+| GET | `/api/meeting-rooms` | 登录 | **会议室列表（M5）**：公共资源，谁都得看得见 |
+| POST | `/api/meeting-rooms` | `room:manage` | 新增会议室（重名 → 409） |
+| PATCH | `/api/meeting-rooms/:id/status` | `room:manage` | 停用 / 启用（停用后不能再**新订**，已有预订不受影响） |
+| GET | `/api/room-bookings?date=` | 登录 | 某一天的预订（默认今天；只含有效预订） |
+| POST | `/api/room-bookings` | 登录 | **预订（M5）**：冲突由数据库唯一约束判 → 409 并写明被谁占了哪一段 |
+| DELETE | `/api/room-bookings/:id` | 本人 / `room:manage` | 取消（横向越权 → 403；重复取消 → 409） |
 | GET | `/api/ai/status` | 登录 | AI 是否已启用（前端据此决定按钮置灰） |
 | POST | `/api/requests/:id/ai-summary` | 申请人 / 审批人 / `request:read:all` | 生成审批摘要。**AI 不可用时也返回 200 + `available:false`**，不抛 5xx |
 | POST | `/api/requests/:id/attachments` | 申请人 + 可编辑态 | 上传附件（multipart，字段名 `file`）。类型看真实字节，大小/数量有上限 |
@@ -144,6 +150,7 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 员工管理 | `/users` | 需 `user:read`；**普通员工打开会看到后端真实 403** |
 | 流程模板 | `/flows` | 只读，展示步骤 / 审批人类型 / 或签会签 |
 | 公告 | `/announcements` | 列表 + 发布抽屉（`announcement:write`） |
+| 会议室 | `/meetings` | **占用时间轴（M5）**：30 分钟一格、停用房斜纹；预订表单；冲突时直接展示后端 409 原文（谁、占了哪一段）；取消按钮按后端 `canCancel` 渲染 |
 | 审计日志 | `/audit-logs` | 需 `audit:read`（仅总经理） |
 | 消息中心 | `/notifications` | 全部 / 未读两个 tab + 侧边栏未读角标（跨组件共享 `reactive`，标已读当场 -1） |
 
@@ -280,6 +287,19 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 > 更进一步，它连「响应体开头有没有 BOM」都断言不了，因为 `fetch` 的 `res.text()` 会按规范**吃掉 BOM**。
 > 两条都在这一轮补掉了（见 `api-test-platform` 的 M14）。**闭环的意义就在这：SUT 长出新面，工具跟着长出新的断言能力，而不是「验证不了就换个方式糊过去」。**
 
+### 10. ⭐ 会议室预订：把「时段冲突」下沉到数据库（M5）
+
+直觉做法是「先查有没有重叠，没有再插」。它有个窗口：「查」和「插」之间只要有 await、多进程、或将来冒出第二个写入口，两个人就能同时通过检查、各插一条 —— 这种 bug 只在并发下出现，单测很难撞上。这里的做法：
+
+- **时间折算成 30 分钟槽序号**（08:00 → 16，左闭右开），预订 = 把 `[start, end)` 里每个槽往 `room_slots` 插一行，主键 `(room_id, date, slot)`；
+- **同一槽插第二行必然撞 UNIQUE** —— 冲突由 SQLite 判定，不经过应用层的「判断」；整个动作在 `BEGIN IMMEDIATE` 事务里，要么全成要么全回滚；
+- 撞约束后查出是谁占着 → 409 文案写明「14:00–15:00『xxx』（王东预订）」，让用户知道该找谁协调，而不是干巴巴一句「失败」；
+- **有专门用例证明防线在数据库层**：绕过 API 直接往 `room_slots` 插冲突行，SQLite 照样报 UNIQUE；
+- 取消 = 事务里删占用行 + 标状态，同一时段立刻可以被别人订（有用例证明「释放」是真的）；
+- 明确不做：跨天（让「同一天」这个坐标失效）、循环预订（另一套 recurrence 模型）、预订需审批（审批流的主战场在 requests，会议室保持轻量）。
+
+> ⭐ 一句话：**应用层的检查可以被绕过，数据库的唯一约束绕不过。并发防线要放在离数据最近的地方。**
+
 ---
 
 ## 测试（三层）
@@ -291,8 +311,8 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **204 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、**导出的 CSV 转义 / 公式注入 / 可见性 / 响应头**（看不到界面） |
-| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **58 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
+| ② 接口测试 | `npm test` | **229 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、**导出的 CSV 转义 / 公式注入 / 可见性 / 响应头**（看不到界面） |
+| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **65 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）。
@@ -300,7 +320,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **204 条用例，9 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）
+- **229 条用例，11 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -312,7 +332,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ```bash
 npm start                        # 或 npm run dev（dev 时改传 http://127.0.0.1:5273）
-node scripts/oa-ui-check.mjs     # 58 条断言，走一段就全过
+node scripts/oa-ui-check.mjs     # 65 条断言，走一段就全过
 ```
 
 用系统已装的 Chrome + Node 内置 WebSocket 直连 CDP，**不下载 Chromium、零 npm 依赖**。断言按业务语义写，覆盖：
@@ -328,6 +348,7 @@ node scripts/oa-ui-check.mjs     # 58 条断言，走一段就全过
 | G 驳回重提 | 不填理由被前端拦下；驳回后状态「已驳回」；重提后**时间线出现 2 个轮次分隔**，第 1 轮驳回痕迹保留 |
 | G2 消息中心 | 未读角标 = 未读行数；标已读后角标**当场 -1**（跨组件共享状态）；「全部标为已读」后角标消失；申请人看不到「待你审批」（收件人隔离） |
 | G3 导出 CSV（M4） | 列表有「导出 CSV」按钮且点得动；成功提示写明**条数 + 后端给的文件名** —— 文件名是从 `Content-Disposition` 读出来的，所以这条同时证明了「token 带上了、响应头也读到了」 |
+| G4 会议室（M5） | 时间轴 28 格；订成功后占用格出现；**同时段再订 → 页面原样显示 409 原文（谁占了哪一段）**；别人的预订没有「取消」按钮（canCancel 由后端给）；本人取消后占用格释放 |
 | H 移动端 | 真改视口到 390px，量 `scrollWidth`（不靠截图，截图会造假象） |
 | I 登出 | 回到 `/login` 且 localStorage 里的 token 已清除 |
 
@@ -354,7 +375,7 @@ npm run verify          # 本地一条命令复现整条 CI：静态扫描 → �
 | | `scripts/oa-ui-check.mjs`（自写 CDP） | `e2e/`（Playwright） |
 |---|---|---|
 | 依赖 | **零**，系统 Chrome + Node 内置 WebSocket | 需装 `@playwright/test` |
-| 断言/重试/报告 | 自己写（58 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
+| 断言/重试/报告 | 自己写（65 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
 | 失败留痕 | 只有控制台输出 | trace 可回放 + 失败截图 |
 | 定位 | **本机随手验一遍**（离线也能跑） | **接 CI 做回归** |
 
@@ -498,7 +519,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（204 条）
+3. **接口测试** `npm test`（229 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
@@ -566,6 +587,12 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 > **M2 + M3 + M4 全部完成。**
 
+### M5 进度
+
+1. ✅ **会议室预订** —— `meeting_rooms` + `room_bookings` + `room_slots`（**18 张表**）+ `server/routes/meetings.js` + 前端 `Meetings.vue`（div-grid 占用时间轴）+ **25 条接口用例 + 7 条真机断言**；测试平台侧同步补 **12 条**用例（OA-61…72，套件 60→72）
+2. ✅ **顺带修掉一个 UI 真 bug** —— 重拍截图导览时发现单据中心「文案说默认看全部、实际默认只看我的」，admin 打开 0 条；已在 M5 提交前修掉
+3. ⭐ **冲突防线的落点**：时间折算成 30 分钟槽序号，预订 = 往 `room_slots`（主键 `room_id+date+slot`）插占用行；**同一槽插第二行必然撞 UNIQUE** —— 防线在数据库，不在「先查再插」的应用层（有专门用例证明：绕过 API 直接写库也插不进冲突槽）。见「关键设计决策」第 10 条
+
 ---
 
 ## 面试材料
@@ -592,7 +619,7 @@ office-oa/
 ├─ .github/workflows/ci.yml     静态扫描 → 构建 → 接口测试 → UI 测试
 ├─ server/
 │  ├─ db.js                     SQLite 封装（DB_PATH 惰性求值）
-│  ├─ schema.sql                15 张表 + 索引
+│  ├─ schema.sql                18 张表 + 索引
 │  ├─ auth.js                   scrypt + 手写 HS256 JWT（纯函数，不碰库；签发时带 jti）
 │  ├─ tokenBlacklist.js         ⭐ Token 黑名单（登出强制作废，按 jti 精确拉黑）
 │  ├─ guards.js                 全局鉴权守卫（每次回查用户状态与权限 + 查 token 黑名单）
@@ -621,7 +648,7 @@ office-oa/
 │     └─ views/                 12 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 9 个测试文件（204 用例）
+├─ tests/                       setup + helpers + 11 个测试文件（229 用例）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）

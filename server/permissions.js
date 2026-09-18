@@ -12,6 +12,9 @@ export const PERMISSIONS = [
   { code: 'request:read:all', name: '查看全部单据', module: 'flow' },
   { code: 'announcement:write', name: '发布公告', module: 'notice' },
   { code: 'audit:read', name: '查看审计日志', module: 'audit' },
+  // M5 会议室：**预订不需要权限**（会议室是公共资源，谁都能订、都得看得见别人的预订才能避开）；
+  // 只有「管理会议室本身」（新增/停用/取消任意人的预订）才要权限。
+  { code: 'room:manage', name: '管理会议室', module: 'meeting' },
 ]
 
 export const PERMISSION_CODES = PERMISSIONS.map((p) => p.code)

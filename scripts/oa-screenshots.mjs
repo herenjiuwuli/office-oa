@@ -220,7 +220,9 @@ try {
   await cdp.shot('05-单据详情-会签时间线.png')
 
   // 6) 已归档的请假单（两级审批都通过 + 无操作按钮）
-  await cdp.nav(`${BASE}/requests/9`, `!!document.querySelector('.kv')`)
+  //    id 用 seed 里的那张 approved 请假单（3 号）。⚠️ 别硬编码一个「跑着跑着才存在」的 id：
+  //    seed --force 重建后库里只剩种子那几条，写 9 就会白等 12 秒超时。
+  await cdp.nav(`${BASE}/requests/3`, `!!document.querySelector('.kv')`)
   await cdp.eval(HELPERS)
   await sleep(400)
   await cdp.shot('06-单据详情-已归档.png')
@@ -274,11 +276,38 @@ try {
   await sleep(300)
   await cdp.shot('12-单据中心-导出CSV-M4.png')
 
-  // 13) 审计日志：导出是数据外带动作，必须留痕 —— admin 才有的 audit:read
+  // 13) 会议室（M5）：时间轴 + 占用格 + 我的预订
+  await cdp.eval(`window.__s.click('退出登录')`)
+  await waitFor(cdp, `location.pathname === '/login'`, '登出')
+  await loginAs(cdp, 'ops01')
+  await cdp.nav(
+    `${BASE}/meetings`,
+    `document.querySelectorAll('.timeline tbody tr').length > 0 || document.querySelectorAll('.tl-row').length > 0`,
+  )
+  await cdp.eval(HELPERS)
+  // 种子的示例预订在**明天**（过去时段本来就不让订）；跳到明天，时间轴上才有东西可看。
+  // ⚠️ v-model 在 date input 上监听的是 input 事件，只发 change 切不过去（实测在这卡过）
+  await cdp.eval(`(() => {
+    const el = document.querySelector('input[type=date]');
+    const d = new Date(Date.now() + 86400000);
+    el.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'OK';
+  })()`)
+  await waitFor(cdp, `!!document.querySelector('.tl-cell.taken')`, '时间轴出现占用格', 8000)
+  await sleep(400)
+  await cdp.shot('13-会议室-占用时间轴-M5.png')
+
+  // 14) 审计日志：预订/取消这类动作必须留痕 —— 但 audit:read 只有 admin 有，
+  //     上一步是 ops01，直接跳过去只会拍到一张 403（就绪条件也就永远等不到表格行）
+  await cdp.eval(`window.__s.click('退出登录')`)
+  await waitFor(cdp, `location.pathname === '/login'`, '登出')
+  await loginAs(cdp, 'admin')
   await cdp.nav(`${BASE}/audit-logs`, `document.querySelectorAll('table.tbl tbody tr').length > 0`)
   await cdp.eval(HELPERS)
   await sleep(400)
-  await cdp.shot('13-审计日志.png')
+  await cdp.shot('14-审计日志.png')
 
   // 14) 移动端（真改视口）
   await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -287,7 +316,7 @@ try {
   await cdp.nav(`${BASE}/`, `!!document.querySelector('.sidebar')`)
   await cdp.eval(HELPERS)
   await sleep(400)
-  await cdp.shot('14-移动端390.png')
+  await cdp.shot('15-移动端390.png')
   await cdp.send('Emulation.clearDeviceMetricsOverride')
 
   console.log('\n完成。')

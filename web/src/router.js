@@ -13,6 +13,7 @@ import Users from './views/Users.vue'
 import Flows from './views/Flows.vue'
 import Announcements from './views/Announcements.vue'
 import AuditLogs from './views/AuditLogs.vue'
+import Meetings from './views/Meetings.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -32,6 +33,7 @@ const router = createRouter({
     { path: '/flows', component: Flows },
     { path: '/announcements', component: Announcements },
     { path: '/audit-logs', component: AuditLogs },
+    { path: '/meetings', component: Meetings },
 
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

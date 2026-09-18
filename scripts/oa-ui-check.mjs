@@ -263,6 +263,33 @@ async function goNotifications(cdp) {
   )
 }
 
+/** 会议室页：填表并点「预订」。返回「是否预订成功」（撞冲突时返回 false，冲突原文留在页面上） */
+async function bookRoom(cdp, title, start, end) {
+  await cdp.eval(`(() => {
+    const set = (sel, val) => {
+      const el = document.querySelector(sel)
+      if (!el) return 'NO:' + sel
+      el.value = val
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      return 'OK'
+    }
+    const r1 = set('[data-t=booking-start]', ${JSON.stringify(start)})
+    const r2 = set('[data-t=booking-end]', ${JSON.stringify(end)})
+    const r3 = set('[data-t=booking-title]', ${JSON.stringify(title)})
+    return [r1, r2, r3].join(',')
+  })()`)
+  await cdp.eval(`window.__t.click('预订')`)
+  // 等结果落地：成功（列表出现该标题）或失败（页面出现错误提示）都算落地
+  const t0 = Date.now()
+  while (Date.now() - t0 < 10000) {
+    const txt = await cdp.eval(`window.__t.text()`)
+    if (txt.includes(title) || txt.includes('已被占用') || txt.includes('必填')) break
+    await sleep(200)
+  }
+  return (await cdp.eval(`window.__t.text()`)).includes(title)
+}
+
 async function goRequests(cdp) {
   await cdp.nav(`${BASE}/requests`)
   // 就绪条件要**页面专属**：等「导出 CSV」这个按钮出现，比等「表格里有行」稳
@@ -538,6 +565,74 @@ async function scenario(cdp) {
     /^已导出 \d+ 条 → requests-\d{8}-\d{6}\.csv$/.test(flash),
     `${clicked} · ${flash}`,
   )
+
+  console.log('\n--- G4. 会议室预订（M5）：时段冲突 ---')
+  // 真机这一层要证明的不是「能订」，而是**冲突在页面上说得清清楚楚**：
+  // 后端 409 的原文（谁、占了哪一段）要原样显示，而不是前端自己造一句「时间冲突」。
+  await logout(cdp)
+  await loginAs(cdp, 'ops02')
+
+  await cdp.nav(`${BASE}/meetings`)
+  await cdp.waitFor(`document.querySelectorAll('.tl-row').length > 1`, '会议室时间轴渲染')
+  check(
+    '菜单里有「会议室」入口',
+    (await cdp.eval(`window.__t.navItems().join(',')`)).includes('会议室'),
+  )
+  const slotCount = await cdp.eval(`document.querySelectorAll('.tl-row:first-child .tl-head').length`)
+  check('时间轴按半小时切格（08:00–22:00 = 28 格）', slotCount === 28, `${slotCount} 格`)
+
+  // 用一个够远的日期，避开 seed 里明天的示例预订，也避开别的测试留下的记录
+  const meetDate = await cdp.eval(`(() => {
+    const d = new Date(Date.now() + 7 * 86400000)
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  })()`)
+  await cdp.eval(`window.__t.set('input[type=date]', ${JSON.stringify(meetDate)})`)
+  await cdp.waitFor(`!window.__t.text().includes('加载中')`, '切换日期后重新加载')
+
+  const titleA = `真机会议 A ${Date.now()}`
+  const booked = await bookRoom(cdp, titleA, '14:00', '15:00')
+  check('预订成功 → 列表里出现这条预订', booked, `${titleA}`)
+
+  const takenCells = await cdp.eval(
+    `document.querySelectorAll('.tl-cell.taken').length`,
+  )
+  check('时间轴上出现占用格（14:00-15:00 = 2 格）', takenCells >= 2, `${takenCells} 格`)
+
+  // 同一时段再订一次 → 页面必须把 409 的原文显示出来
+  await bookRoom(cdp, `真机会议 B ${Date.now()}`, '14:00', '15:00')
+  await cdp.waitFor(`window.__t.text().includes('已被占用')`, '冲突提示出现', 8000)
+  const clashText = await cdp.eval(
+    `(window.__t.text().match(/该时段已被占用[^\\n]*/) || ['(没匹配到)'])[0]`,
+  )
+  check(
+    '★ 冲突提示写明「被谁占了哪一段」（后端 409 原文，不是前端自己造的话）',
+    clashText.includes('真机会议 A'),
+    clashText.slice(0, 60),
+  )
+
+  // 换成别人的账号：别人的预订不该出现「取消」按钮（canCancel 由后端给结论）
+  await logout(cdp)
+  await loginAs(cdp, 'ops03')
+  await cdp.nav(`${BASE}/meetings`)
+  await cdp.eval(`window.__t.set('input[type=date]', ${JSON.stringify(meetDate)})`)
+  await cdp.waitFor(`window.__t.text().includes('真机会议 A')`, '别人的账号也能看到这条预订')
+  const cancelBtns = await cdp.eval(`document.querySelectorAll('[data-t=booking-cancel]').length`)
+  check(
+    '★ 别人的预订不显示「取消」按钮（后端 canCancel=false，前端不自己判断）',
+    cancelBtns === 0,
+    `${cancelBtns} 个取消按钮`,
+  )
+
+  // 本人回来取消 → 槽位释放，时间轴占用格消失
+  await logout(cdp)
+  await loginAs(cdp, 'ops02')
+  await cdp.nav(`${BASE}/meetings`)
+  await cdp.eval(`window.__t.set('input[type=date]', ${JSON.stringify(meetDate)})`)
+  await cdp.waitFor(`document.querySelectorAll('[data-t=booking-cancel]').length > 0`, '本人看到取消按钮')
+  await cdp.eval(`window.__t.click('取消')`)
+  await cdp.waitFor(`window.__t.text().includes('已取消')`, '取消成功提示')
+  const leftCells = await cdp.eval(`document.querySelectorAll('.tl-cell.taken').length`)
+  check('取消后时间轴占用格被释放', leftCells === 0, `剩 ${leftCells} 格`)
 
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })

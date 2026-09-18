@@ -16,6 +16,9 @@ export const DEFAULT_PASSWORD_LABEL = '统一测试密码'
 //    在事务内是**空操作**（不生效）——所以清表只能靠这个顺序，不能指望临时关外键。
 //    新增带外键的表时，务必插到对应父表之前（如 token_blacklist 要在 users 之前）。
 const TABLES_TO_CLEAR = [
+  'room_slots', // M5：占用槽是 room_bookings 的子表，必须排在最前
+  'room_bookings',
+  'meeting_rooms',
   'approval_tasks',
   'attachments',
   'notifications',
@@ -44,10 +47,29 @@ const ROLE_PERMISSIONS = {
     'flow:read',
     'request:read:all',
     'announcement:write',
+    'room:manage', // 行政管会议室（新增/停用/代取消），预订本身不需要权限
   ],
   dept_manager: ['dept:read', 'user:read', 'flow:read'],
   employee: ['dept:read', 'flow:read'],
 }
+
+// ── M5 会议室与示例预订 ────────────────────────────────────────
+const ROOMS = [
+  { name: '星野厅', location: '3 楼 301', capacity: 30, status: 'active' },
+  { name: '红叶室', location: '3 楼 302', capacity: 12, status: 'active' },
+  { name: '白鹭室', location: '4 楼 401', capacity: 6, status: 'active' },
+  { name: '旧洽谈室', location: '4 楼 402', capacity: 8, status: 'disabled' },
+]
+// 示例预订一律放在**明天**：过去时段本来就不让订，种子不能自己打自己脸
+const _tmr = new Date(Date.now() + 86400000)
+const TOMORROW =
+  `${_tmr.getFullYear()}-${String(_tmr.getMonth() + 1).padStart(2, '0')}-${String(_tmr.getDate()).padStart(2, '0')}`
+// 槽序号：18=09:00, 20=10:00, 22=11:00, 24=12:00
+const BOOKINGS = [
+  { room: 1, user: 3, s: 18, e: 20, title: '内容运营双周会' }, // 王东 09:00-10:00 星野厅
+  { room: 2, user: 6, s: 22, e: 24, title: '艺人执行对齐' }, // 周大 11:00-12:00 红叶室
+  { room: 3, user: 5, s: 20, e: 21, title: '一对一沟通' }, // 孙小 10:00-10:30 白鹭室
+]
 
 // 部门（树形）
 const DEPARTMENTS = [
@@ -176,6 +198,27 @@ export function seed(db = getDb(), { force = false } = {}) {
     insAnn.run('欢迎使用星野 OA（演示数据）', '本系统为练手/作品项目，所有数据均为虚构。', 2, 1)
     insAnn.run('请假流程调整通知', '即日起请假需直属上级审批后再由人事复核。', 2, 0)
 
+    // ── M5 会议室 ────────────────────────────────────────────────
+    // 4 间（含 1 间**已停用**的：演示「停用的房间不能再订，但历史预订不受影响」）
+    const insRoom = db.prepare(
+      `INSERT INTO meeting_rooms (id, name, location, capacity, status) VALUES (?, ?, ?, ?, ?)`,
+    )
+    ROOMS.forEach((r, i) => insRoom.run(i + 1, r.name, r.location, r.capacity, r.status))
+
+    // 槽序号：18=09:00, 20=10:00, 22=11:00, 24=12:00
+    const insBk = db.prepare(
+      `INSERT INTO room_bookings (id, room_id, user_id, date, start_slot, end_slot, title)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    const insSlot = db.prepare(
+      `INSERT INTO room_slots (room_id, date, slot, booking_id) VALUES (?, ?, ?, ?)`,
+    )
+    BOOKINGS.forEach((b, i) => {
+      const id = i + 1
+      insBk.run(id, b.room, b.user, TOMORROW, b.s, b.e, b.title)
+      for (let s = b.s; s < b.e; s++) insSlot.run(b.room, TOMORROW, s, id)
+    })
+
     // 几张示例单据，让前端有东西可看
     const snapshotOf = (type) => {
       const f = FLOWS.find((x) => x.type === type)
@@ -223,6 +266,8 @@ export function seed(db = getDb(), { force = false } = {}) {
     permissions: PERMISSIONS.length,
     flows: FLOWS.length,
     requests: 3,
+    rooms: ROOMS.length,
+    bookings: BOOKINGS.length,
     password: DEFAULT_PASSWORD,
   }
 }

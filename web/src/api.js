@@ -199,4 +199,16 @@ export const api = {
   auditLogs: {
     list: (query) => request('/audit-logs', { query }),
   },
+
+  // --- M5 会议室 ---
+  rooms: {
+    list: () => request('/meeting-rooms'),
+    create: (data) => request('/meeting-rooms', { method: 'POST', body: data }),
+    setStatus: (id, status) => request(`/meeting-rooms/${id}/status`, { method: 'PATCH', body: { status } }),
+  },
+  bookings: {
+    list: (query) => request('/room-bookings', { query }),
+    create: (data) => request('/room-bookings', { method: 'POST', body: data }),
+    cancel: (id) => request(`/room-bookings/${id}`, { method: 'DELETE' }),
+  },
 }
