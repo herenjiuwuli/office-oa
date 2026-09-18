@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · **M3 站内通知完成**：消息中心 + 收件人隔离 + 引擎同事务挂钩）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · M3 站内通知完成：消息中心 + 收件人隔离 + 引擎同事务挂钩 · **M4 单据导出 CSV 完成**：自写 CSV 转义 + ⭐公式注入防护 + BOM + 只导出你有权看到的，并**倒逼测试平台补出「断言响应头」能力**）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -29,7 +29,7 @@
 | 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **184 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **204 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -54,7 +54,7 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 184 条接口用例
+npm test                            # ② 跑全部 204 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
@@ -103,6 +103,7 @@ node seed.js --force
 | GET | `/api/request-types` | 登录 | 单据类型元数据（前端据此渲染表单） |
 | GET | `/api/flows` | `flow:read` | 流程模板 + 步骤 |
 | GET | `/api/requests` | 登录 | 单据列表，**默认只看自己的**；`request:read:all` 可看全部（`?mine=1` 强制只看自己） |
+| GET | `/api/requests/export.csv` | 登录 | **导出 CSV（M4）**：筛选条件与数据范围**与列表共用同一套规则**；返回 `text/csv` + `Content-Disposition` + `X-Total-Count`，并记审计 |
 | POST | `/api/requests` | 登录 | 建单（只建草稿，提交是单独一步） |
 | GET | `/api/requests/:id` | 申请人 / 审批人 / `request:read:all` | 详情 + 流程快照 + 审批时间线 |
 | POST | `/api/requests/:id/submit` | 申请人 | 提交（草稿 / 已驳回可提交） |
@@ -136,7 +137,7 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 登录 | `/login` | 8 个演示账号一键填充（验收要两个窗口分别登申请人和审批人） |
 | 总览 | `/` | 待办数 / 我的单据统计 / 最近公告 / **我的角色与权限码**（RBAC 可视化） |
 | 我的待办 | `/todo` | 只列「轮到你 + 单据仍在审批中」；同意/驳回在同一抽屉里，避免误点 |
-| 单据中心 | `/requests` | 筛选 + 数据范围（有 `request:read:all` 才能切「全部」） |
+| 单据中心 | `/requests` | 筛选 + 数据范围（有 `request:read:all` 才能切「全部」）+ **导出 CSV（M4：带当前筛选，且只能导出你有权看到的那些）** |
 | 新建单据 | `/requests/new` | 表单字段从后端 `/api/request-types` 拉，前端只决定「怎么渲染」 |
 | 单据详情 | `/requests/:id` | 审批时间线（含多轮历史）+ 流程快照 + 按身份算出的操作按钮 |
 | 部门架构 | `/departments` | 树形，`dept:write` 才有增改入口 |
@@ -144,6 +145,7 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 流程模板 | `/flows` | 只读，展示步骤 / 审批人类型 / 或签会签 |
 | 公告 | `/announcements` | 列表 + 发布抽屉（`announcement:write`） |
 | 审计日志 | `/audit-logs` | 需 `audit:read`（仅总经理） |
+| 消息中心 | `/notifications` | 全部 / 未读两个 tab + 侧边栏未读角标（跨组件共享 `reactive`，标已读当场 -1） |
 
 ### ⭐ 前端刻意「不拦」越权
 
@@ -257,7 +259,26 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 - **收件人隔离靠 SQL 层 `user_id = 当前用户`，不靠权限码** —— 通知是纯私有资源，没有「可见但无权限」的中间态；别人的 / 不存在的统一 404，不泄漏存在性（和引擎「授权先于状态」同一取舍）。
 - **不给自己发通知**：审批人恰好是申请人这类配置错误，不该变成对自己的骚扰。
 
-23 条接口用例 + 真机 54 条断言覆盖：挂钩触发、收件人隔离、轮次快照、标已读幂等、写路径 404。
+23 条接口用例 + 消息中心一段真机断言覆盖：挂钩触发、收件人隔离、轮次快照、标已读幂等、写路径 404。
+
+### 9. ⭐ 导出 CSV：把「数据」安全地变成「文件」（M4）
+
+「导出」看着最像体力活，但坑全在细节里，四条：
+
+- ⭐⭐ **CSV 公式注入**。单元格以 `= + - @` 开头时，Excel / WPS 打开会**当公式执行**。真实威胁是
+  「申请人把标题写成 `=cmd|'/c calc'!A1`，审批人导出后用 Excel 打开 → 在**审批人的机器上**执行了」。
+  这是 OA / 报表类系统里非常典型的一条：**导出把「数据」变成了「代码」**。防法是加单引号前缀（Excel 当文本且不显示它）。
+  - 取舍：**先排除合法数字** —— 一律按首字符判定的话，一个正常的 `-5` 会被写成 `'-5`（Excel 显示正常，但下游按字节解析会多一个前缀）。所以只对「看起来像公式」的加前缀。
+  - **顺序不能反**：先加前缀、再做 RFC4180 引号包裹，前缀才会被包在引号里。
+- ⭐ **可见性必须与列表共用一处判断**（`scopeFilter()`）。分成两处写的后果**不报错、也没人发现**：列表看着是对的，导出却悄悄多给了数据。「导出的比看得到的多」是个**沉默的**越权口子。筛选条件同理 —— 否则会出现「我筛了已驳回，导出来却是全部」。
+- **BOM 与 Excel**：不加 UTF-8 BOM，Excel 打开中文会乱码。代价是「用代码读这个文件」会多一个不可见字符 —— 这个代价我们认，因为人打开 Excel 是主场景。
+- **两处「谁的数据谁负责」**：文件名由服务端给（`Content-Disposition`，纯 ASCII，避开中文编码坑）；**条数由服务端给**（`X-Total-Count`）—— 前端提示「已导出 N 条」时**不去数 CSV 的行**，因为含换行的字段会被引号包着跨行，按行数必然数错。
+- **导出必须留审计**：它是典型的「数据外带」动作，日志里要分得清「全量导出」和「只看自己」。
+
+> ⭐ **这一轮真正的意外收获**：导出把一个测试平台的**能力缺口**顶出来了 —— 平台当时的断言只有
+> 状态码 / 包含 / 耗时 / JSONPath，**根本断言不了响应头**（而「导出对不对」有一半答案在头里）；
+> 更进一步，它连「响应体开头有没有 BOM」都断言不了，因为 `fetch` 的 `res.text()` 会按规范**吃掉 BOM**。
+> 两条都在这一轮补掉了（见 `api-test-platform` 的 M14）。**闭环的意义就在这：SUT 长出新面，工具跟着长出新的断言能力，而不是「验证不了就换个方式糊过去」。**
 
 ---
 
@@ -270,8 +291,8 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **184 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入（看不到界面） |
-| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **54 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
+| ② 接口测试 | `npm test` | **204 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、**导出的 CSV 转义 / 公式注入 / 可见性 / 响应头**（看不到界面） |
+| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **58 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
 > ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）。
@@ -279,7 +300,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ### 接口测试（vitest）
 
-- **184 条用例，8 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）
+- **204 条用例，9 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -291,7 +312,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ```bash
 npm start                        # 或 npm run dev（dev 时改传 http://127.0.0.1:5273）
-node scripts/oa-ui-check.mjs     # 54 条断言，走一段就全过
+node scripts/oa-ui-check.mjs     # 58 条断言，走一段就全过
 ```
 
 用系统已装的 Chrome + Node 内置 WebSocket 直连 CDP，**不下载 Chromium、零 npm 依赖**。断言按业务语义写，覆盖：
@@ -305,6 +326,8 @@ node scripts/oa-ui-check.mjs     # 54 条断言，走一段就全过
 | E 一级审批 | 上级待办里出现该单 → 抽屉带出申请人与事由 → 同意后推进到第 2 步 |
 | F 二级审批 | 人事复核通过 → **归档「已通过」**，且页面上「同意/驳回/提交/撤回」按钮数 = 0 |
 | G 驳回重提 | 不填理由被前端拦下；驳回后状态「已驳回」；重提后**时间线出现 2 个轮次分隔**，第 1 轮驳回痕迹保留 |
+| G2 消息中心 | 未读角标 = 未读行数；标已读后角标**当场 -1**（跨组件共享状态）；「全部标为已读」后角标消失；申请人看不到「待你审批」（收件人隔离） |
+| G3 导出 CSV（M4） | 列表有「导出 CSV」按钮且点得动；成功提示写明**条数 + 后端给的文件名** —— 文件名是从 `Content-Disposition` 读出来的，所以这条同时证明了「token 带上了、响应头也读到了」 |
 | H 移动端 | 真改视口到 390px，量 `scrollWidth`（不靠截图，截图会造假象） |
 | I 登出 | 回到 `/login` 且 localStorage 里的 token 已清除 |
 
@@ -314,7 +337,7 @@ node scripts/oa-ui-check.mjs     # 54 条断言，走一段就全过
 1. **登录页旁边渲染出了侧边栏**（`App.vue` 无条件套外壳）——当时所有接口用例和静态扫描全绿，**因为断言只看了 pathname 和按钮，没看布局**；
 2. **归档单据上给已审过的审批人显示了「但当前还没轮到你」**——文案分支顺序写反了，单据都结束了还说"没轮到你"。
 
-这两条都不是「代码报错」，是 54 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
+这两条都不是「代码报错」，是 58 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
 
 ---
 
@@ -331,7 +354,7 @@ npm run verify          # 本地一条命令复现整条 CI：静态扫描 → �
 | | `scripts/oa-ui-check.mjs`（自写 CDP） | `e2e/`（Playwright） |
 |---|---|---|
 | 依赖 | **零**，系统 Chrome + Node 内置 WebSocket | 需装 `@playwright/test` |
-| 断言/重试/报告 | 自己写（54 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
+| 断言/重试/报告 | 自己写（58 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
 | 失败留痕 | 只有控制台输出 | trace 可回放 + 失败截图 |
 | 定位 | **本机随手验一遍**（离线也能跑） | **接 CI 做回归** |
 
@@ -475,7 +498,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
-3. **接口测试** `npm test`（184 条）
+3. **接口测试** `npm test`（204 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
@@ -536,7 +559,12 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 1. ✅ **站内通知（消息中心）** —— `server/lib/notify.js`（引擎同事务挂钩：提交发「待你审批」、归档/驳回发「结果」、撤回发「已撤回」）+ `server/routes/notifications.js`（收件人隔离、标已读幂等、写路径统一 404）+ 前端 `Notifications.vue` + 侧边栏未读角标（跨组件共享 `reactive` 状态，标已读当场 -1 不用刷新）。见「站内通知（M3）」一节
 
-> **M2 + M3 全部完成。**
+### M4 进度
+
+1. ✅ **单据导出 CSV** —— `server/lib/csv.js`（自写：RFC4180 转义 + ⭐公式注入防护 + BOM + ASCII 文件名）+ `GET /api/requests/export.csv`（可见性与列表共用 `scopeFilter()`、带筛选、记审计）+ 前端「导出 CSV」按钮 + **20 条接口用例 + 4 条真机断言**。见「关键设计决策」第 9 条
+2. ✅ **顺带倒逼测试平台补能力** —— 导出让平台第一次需要断言**响应头**（`api-test-platform` M14）；过程中还挖出「`fetch` 的 `res.text()` 会吃掉 BOM」这个坑
+
+> **M2 + M3 + M4 全部完成。**
 
 ---
 
@@ -544,8 +572,8 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/面试弹药-office-oa.md`](docs/面试弹药-office-oa.md) | 一句话定位 / **8 个**技术亮点 / 「我改过的点 + 为什么」**14 条**候选清单 / **23 道**高频深挖题 + 答案 / 一句话收尾（含 AI 与并发两个备用收尾） |
-| [`docs/关源码复现-office-oa.md`](docs/关源码复现-office-oa.md) | 9 道复现练习 + 示范轮（第 2 题给了 `actOnRequest()` 六步标准答案）+ 评分标准 + 错题本模板 |
+| [`docs/面试弹药-office-oa.md`](docs/面试弹药-office-oa.md) | 一句话定位 / **11 个**技术亮点 / 「我改过的点 + 为什么」**24 条**候选清单 / **34 道**高频深挖题 + 答案 / 一句话收尾（含 AI、并发、安全三个备用收尾） |
+| [`docs/关源码复现-office-oa.md`](docs/关源码复现-office-oa.md) | 13 道复现练习 + 示范轮（第 2 题给了 `actOnRequest()` 六步标准答案）+ 评分标准 + 错题本模板 |
 
 > ⚠️ 两份都写明**诚实边界**：本项目是「我定需求 + AI 实现」的协作产出，**不能装成全独立手写**。正确讲法是「需求、验收标准、缺陷判定是我定的；技术方案逐条复现，能讲清为什么这么设计」。
 > 这个项目和别的练手项目最大的不同：**它本身就是被测系统（SUT）**，配合 `api-test-platform` 一起讲 = 「我写了一个被测系统，又用自己的测试平台把它测穿了」。
@@ -564,7 +592,7 @@ office-oa/
 ├─ .github/workflows/ci.yml     静态扫描 → 构建 → 接口测试 → UI 测试
 ├─ server/
 │  ├─ db.js                     SQLite 封装（DB_PATH 惰性求值）
-│  ├─ schema.sql                14 张表 + 索引
+│  ├─ schema.sql                15 张表 + 索引
 │  ├─ auth.js                   scrypt + 手写 HS256 JWT（纯函数，不碰库；签发时带 jti）
 │  ├─ tokenBlacklist.js         ⭐ Token 黑名单（登出强制作废，按 jti 精确拉黑）
 │  ├─ guards.js                 全局鉴权守卫（每次回查用户状态与权限 + 查 token 黑名单）
@@ -578,7 +606,7 @@ office-oa/
 │  ├─ lib/
 │  │  ├─ ai.js                ⭐ 审批摘要（prompt 注入防护 / 优雅降级 / 输出规范化）
 │  │  └─ storage.js           ⭐ 附件存储（魔数嗅探 / 路径防护 / 大小上限）
-│  └─ routes/                   auth / departments / users / requests / attachments / todo / announcements / auditLogs / ai
+│  └─ routes/                   auth / departments / users / requests / attachments / notifications / todo / announcements / auditLogs / ai
 ├─ web/                         前端（独立 package.json）
 │  ├─ index.html
 │  ├─ vite.config.js            dev 端口 5273，代理 /api → 3200
@@ -590,10 +618,10 @@ office-oa/
 │     ├─ labels.js              状态机 / 动作 / 审批人类型的展示映射
 │     ├─ forms.js               单据表单字段元数据（渲染 + 归一化 + 必填校验）
 │     ├─ style.css              纯 CSS 设计系统（含 820px 响应式）
-│     └─ views/                 11 个视图
+│     └─ views/                 12 个视图
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 8 个测试文件（184 用例）
+├─ tests/                       setup + helpers + 9 个测试文件（204 用例）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）

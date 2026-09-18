@@ -76,6 +76,41 @@ export const api = {
     approve: (id, comment) => request(`/requests/${id}/approve`, { method: 'POST', body: { comment } }),
     reject: (id, comment) => request(`/requests/${id}/reject`, { method: 'POST', body: { comment } }),
     cancel: (id) => request(`/requests/${id}/cancel`, { method: 'POST', body: {} }),
+
+    // 导出 CSV（M4）。和下载附件同源：**必须带 Authorization 头**，
+    // 所以不能写成一个裸 <a href="/api/requests/export.csv">（那样带不上 token，会 401）。
+    // 文件名听后端的（Content-Disposition），前端只负责把它落到磁盘 —— 名字该由「谁生成谁命名」。
+    exportCsv: async (query) => {
+      const headers = {}
+      const token = getToken()
+      if (token) headers.Authorization = `Bearer ${token}`
+      const res = await fetch(`${BASE}/requests/export.csv${qs(query)}`, { headers })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        if (res.status === 401) {
+          clearSession()
+          if (window.location.pathname !== '/login') window.location.replace('/login?expired=1')
+        }
+        const err = new Error(data.error || `导出失败（HTTP ${res.status}）`)
+        err.status = res.status
+        throw err
+      }
+      const cd = res.headers.get('Content-Disposition') || ''
+      const matched = /filename="([^"]+)"/.exec(cd)
+      const filename = matched ? matched[1] : 'requests.csv'
+      // 条数走响应头 —— 前端**不数 CSV 的行**：含换行的字段会被引号包着跨行，按 \n 数必然错
+      const total = Number(res.headers.get('X-Total-Count') || 0)
+
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      return { filename, total }
+    },
   },
 
   // --- 待办 ---

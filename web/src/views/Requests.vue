@@ -26,20 +26,44 @@ async function loadTypes() {
   }
 }
 
+// 筛选条件只在这里拼一次：列表和导出**必须**用同一份 —— 否则会出现
+// 「我筛了已驳回，导出的却是全部」这种「看着像功能差异、其实是泄露」的问题
+function buildQuery() {
+  const query = {}
+  if (filters.status) query.status = filters.status
+  if (filters.type) query.type = filters.type
+  if (canSeeAll.value && filters.mine === '1') query.mine = 1
+  return query
+}
+
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const query = {}
-    if (filters.status) query.status = filters.status
-    if (filters.type) query.type = filters.type
-    if (canSeeAll.value && filters.mine === '1') query.mine = 1
-    const res = await api.requests.list(query)
+    const res = await api.requests.list(buildQuery())
     items.value = res.items || []
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+const exporting = ref(false)
+const flash = ref('')
+
+async function onExport() {
+  exporting.value = true
+  error.value = ''
+  flash.value = ''
+  try {
+    // 条数来自响应头（后端数的），前端不解析 CSV —— 含换行的字段会把行数数错
+    const { filename, total } = await api.requests.exportCsv(buildQuery())
+    flash.value = `已导出 ${total} 条 → ${filename}`
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -102,10 +126,19 @@ const counts = computed(() => {
         <div class="field" style="flex: 0 0 auto">
           <button class="btn" @click="load">刷新</button>
         </div>
+        <div class="field" style="flex: 0 0 auto">
+          <button class="btn" :disabled="exporting" @click="onExport">
+            {{ exporting ? '导出中…' : '导出 CSV' }}
+          </button>
+        </div>
       </div>
+      <p class="page-desc" style="margin: 10px 0 0">
+        导出会带上当前筛选条件；能看到哪些单据，导出就只有哪些（与上面的列表同一条规则，后端强制）。
+      </p>
     </div>
 
     <div v-if="error" class="alert alert-error">{{ error }}</div>
+    <div v-if="flash" class="alert alert-ok">{{ flash }}</div>
 
     <div class="card">
       <div class="card-title">

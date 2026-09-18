@@ -263,6 +263,16 @@ async function goNotifications(cdp) {
   )
 }
 
+async function goRequests(cdp) {
+  await cdp.nav(`${BASE}/requests`)
+  // 就绪条件要**页面专属**：等「导出 CSV」这个按钮出现，比等「表格里有行」稳
+  // （表格有行可能是上一条路由留下的旧 DOM）
+  await cdp.waitFor(
+    `[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '导出 CSV')`,
+    '单据列表加载完成',
+  )
+}
+
 /** 取出「某张单据」在消息中心里的所有行文本（新在前） */
 const notifRows = (cdp, titleText) =>
   cdp.eval(
@@ -501,6 +511,34 @@ async function scenario(cdp) {
     `共 ${mgrRows.length} 行 · ` + mgrRows.map((r) => (r.includes('第 2 轮') ? '第2轮' : r.includes('第 1 轮') ? '第1轮' : '?')).join(','),
   )
 
+  console.log('\n--- G3. 单据导出 CSV（M4）---')
+  // 导出的验收点有一半在响应头里（平台那边用新补的头断言查）。真机这一层要看的是**链路**：
+  // 按钮必须走 fetch 带上 token（写成裸 <a href> 会 401），并且把后端给的条数/文件名如实显示出来
+  // —— 提示里的文件名是从 Content-Disposition 读出来的，所以这条断言同时证明了「响应头读到了」。
+  await logout(cdp)
+  await loginAs(cdp, 'ops02')
+  await goRequests(cdp)
+
+  check(
+    '单据列表有「导出 CSV」按钮',
+    await cdp.eval(`[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '导出 CSV')`),
+  )
+  check(
+    '按钮旁写明「导出与列表同一条数据范围」（不让用户误以为是全量导出）',
+    await cdp.eval(`window.__t.text().includes('导出会带上当前筛选条件')`),
+  )
+
+  const clicked = await cdp.eval(`window.__t.click('导出 CSV')`)
+  await cdp.waitFor(`window.__t.text().includes('已导出')`, '导出完成提示')
+  const flash = await cdp.eval(
+    `(window.__t.text().match(/已导出 \\d+ 条 → requests-\\d{8}-\\d{6}\\.csv/) || ['(没匹配到)'])[0]`,
+  )
+  check(
+    '★ 点「导出 CSV」→ 提示写明条数 + 后端给的文件名（token 带上了、响应头也读到了）',
+    /^已导出 \d+ 条 → requests-\d{8}-\d{6}\.csv$/.test(flash),
+    `${clicked} · ${flash}`,
+  )
+
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   await goDetail(cdp, reqId2)
@@ -511,6 +549,11 @@ async function scenario(cdp) {
   await goNotifications(cdp)
   const ov2 = await cdp.eval(`window.__t.overflow()`)
   check('消息中心 390px 无横向溢出', !ov2.overflow, `scrollWidth=${ov2.scrollWidth} clientWidth=${ov2.clientWidth}`)
+
+  // 单据列表这轮多了一个按钮，一起过一遍窄屏
+  await goRequests(cdp)
+  const ov3 = await cdp.eval(`window.__t.overflow()`)
+  check('单据列表 390px 无横向溢出', !ov3.overflow, `scrollWidth=${ov3.scrollWidth} clientWidth=${ov3.clientWidth}`)
 
   await cdp.send('Emulation.clearDeviceMetricsOverride')
 
