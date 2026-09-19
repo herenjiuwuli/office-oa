@@ -172,6 +172,10 @@ async function withBrowser(fn) {
   const CHROME = findChrome()
   const PORT = 9334
   const userDataDir = path.join(os.tmpdir(), 'oa-cdp-' + Date.now())
+  // CI（GitHub runner / 容器）里 Chrome 需要 --no-sandbox，否则起不来；
+  // --disable-dev-shm-usage 是因为容器 /dev/shm 太小会让渲染进程崩。
+  // 本机不加这两个（保持沙箱开启），只在 CI 生效。
+  const ciFlags = process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage'] : []
   const child = spawn(
     CHROME,
     [
@@ -179,6 +183,7 @@ async function withBrowser(fn) {
       '--remote-debugging-port=' + PORT,
       '--remote-allow-origins=*', // 必须：否则 WS 握手 403
       '--user-data-dir=' + userDataDir, // 必须：临时隔离，用完删
+      ...ciFlags,
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-gpu',
