@@ -77,6 +77,34 @@ export const api = {
     reject: (id, comment) => request(`/requests/${id}/reject`, { method: 'POST', body: { comment } }),
     cancel: (id) => request(`/requests/${id}/cancel`, { method: 'POST', body: {} }),
 
+    // 批量审批（M8）。**故意不复用 request()**，原因很具体：
+    // 全失败时后端返回 400，而那个 400 的响应体里带着**逐条原因**（results）。
+    // request() 只认 {error}，会把 results 整个丢掉 —— 用户只看到「请求失败（HTTP 400）」，
+    // 既不知道是哪几条、也不知道各自为什么没成。这正是批量场景最需要说清的东西。
+    // 所以这里只把「连 results 都没有」（参数校验失败）当异常。
+    // 另外 207 在 res.ok 里是 true，不会走异常路径。
+    batchApprove: async (ids, action, comment = '') => {
+      const headers = { 'Content-Type': 'application/json' }
+      const token = getToken()
+      if (token) headers.Authorization = `Bearer ${token}`
+      const res = await fetch(`${BASE}/requests/batch-approve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ids, action, comment }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 401) {
+        clearSession()
+        if (window.location.pathname !== '/login') window.location.replace('/login?expired=1')
+      }
+      if (!data.results) {
+        const err = new Error(data.error || `批量操作失败（HTTP ${res.status}）`)
+        err.status = res.status
+        throw err
+      }
+      return { httpStatus: res.status, ...data }
+    },
+
     // 导出 CSV（M4）。和下载附件同源：**必须带 Authorization 头**，
     // 所以不能写成一个裸 <a href="/api/requests/export.csv">（那样带不上 token，会 401）。
     // 文件名听后端的（Content-Disposition），前端只负责把它落到磁盘 —— 名字该由「谁生成谁命名」。

@@ -290,7 +290,14 @@ export function actOnRequest(requestId, userId, action, comment = '') {
   const related = db
     .prepare(`SELECT 1 AS ok FROM approval_tasks WHERE request_id = ? AND approver_id = ? LIMIT 1`)
     .get(requestId, userId)
-  if (!related) throw forbidden('你不是该单据的审批人')
+  if (!related) {
+    // ⚠️ 打一个「外人」标记（批量接口要用）：批量审批据此把「不存在」和「跟我毫无关系」
+    //    对外统一成同一个结果；否则挨个试单号，就能从这个接口问出「哪些单据是存在的」。
+    //    详见 batchActOnRequest 的取舍 ③。
+    const err = forbidden('你不是该单据的审批人')
+    err.outsider = true
+    throw err
+  }
 
   // ② 状态校验：只有 pending 能审。重复提交、已归档、已撤回都在这里挡下 → 409
   if (req.status !== 'pending') {
@@ -445,4 +452,93 @@ export function cancelRequest(requestId, userId) {
 
   logAction({ userId, action: 'request.cancel', targetType: 'request', targetId: requestId })
   return getRequestOr404(requestId)
+}
+
+// ---------------------------------------------------------------------------
+// 批量审批
+// ---------------------------------------------------------------------------
+
+/** 一次批量最多处理多少条。再多应该分批调，而不是让一个请求长时间占着连接。 */
+export const BATCH_MAX = 50
+
+/**
+ * 批量审批：**逐条调用 actOnRequest**，每条一个独立事务。
+ *
+ * 四个刻意的取舍（都是可以拿去讲的）：
+ *   ① 不共用一个"大事务" —— 一条失败不该把已经批好的 4 条一起回滚。
+ *      用户在批量场景的预期是「能批的先批掉」，不是「要么全成、要么全不成」。
+ *   ② **id 去重** —— ids: [5,5,5] 若不去重，同一张单据的状态机会被推进三次。
+ *      这是批量接口最容易漏、后果最严重的边界（重复审批 / 越级推进）。
+ *   ③ 「不存在」和「无权」对外返回**同一种**结果 —— 否则批量接口就成了 id 枚举器：
+ *      挨个试单号，从返回差异就能问出"哪些单据是存在的"。
+ *   ④ HTTP 状态码表达「这一批整体怎么处理了」，单条原因在 results 里各带一份：
+ *      全成功 200 / 部分成功 207 / 全失败 400。前端不需要解析 body 就知道有没有部分成功。
+ *
+ * 通知不用在这里补：actOnRequest 已经把通知写在各自的事务里，批量 N 条成功 = N 条通知。
+ */
+export function batchActOnRequest(ids, userId, action, comment = '') {
+  if (!Array.isArray(ids)) throw badRequest('ids 必须是数组')
+  if (ids.length === 0) throw badRequest('ids 不能为空')
+  if (ids.length > BATCH_MAX) throw badRequest(`一次最多批量处理 ${BATCH_MAX} 条`)
+
+  const seen = new Set()
+  const unique = []
+  for (const raw of ids) {
+    const id = Number(raw)
+    if (!Number.isInteger(id) || id <= 0) throw badRequest('ids 里只能放正整数')
+    if (seen.has(id)) continue // ★ 取舍 ②
+    seen.add(id)
+    unique.push(id)
+  }
+
+  const results = []
+  for (const id of unique) {
+    try {
+      const row = actOnRequest(id, userId, action, comment)
+      results.push({
+        id,
+        ok: true,
+        status: 200,
+        requestStatus: row.status,
+        currentStep: row.current_step,
+      })
+    } catch (e) {
+      const http = e?.statusCode || 500
+      // ★ 取舍 ③：只有「跟我毫无关系」（单据不存在 / outsider）才模糊化。
+      //    本来就是这张单审批人的人，本来就能查看它（canViewRequest 放行），
+      //    对他们把原因说清楚（例如「你不是当前步骤的审批人」= 单据已被别人推进了）
+      //    不会多泄露任何东西 —— 反而含糊其辞会让「别人先批了」这种正常竞态显得莫名其妙。
+      const probe = http === 404 || e?.outsider === true
+      results.push({
+        id,
+        ok: false,
+        code: probe ? 'not_permitted' : http === 409 ? 'conflict' : http === 400 ? 'bad_request' : 'server_error',
+        status: probe ? 403 : http,
+        message: probe ? '无权处理该单据' : e.message,
+      })
+    }
+  }
+
+  const succeeded = results.filter((r) => r.ok).length
+  const failed = unique.length - succeeded
+
+  // 每条成功都已经在 actOnRequest 里记了各自的操作日志；
+  // 这里再补一条**汇总**，审计里才能看出"这些单据是被一次批量操作一起批的"。
+  if (succeeded > 0) {
+    logAction({
+      userId,
+      action: `request.batch_${action}`,
+      targetType: 'request',
+      detail: { requested: ids.length, deduped: unique.length, succeeded, failed, ids: unique },
+    })
+  }
+
+  return {
+    total: unique.length,
+    requested: ids.length,
+    succeeded,
+    failed,
+    httpStatus: succeeded === unique.length ? 200 : succeeded === 0 ? 400 : 207,
+    results,
+  }
 }

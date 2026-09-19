@@ -788,3 +788,86 @@ textarea {
   /* 抽屉改为全宽，否则表单在小屏里太窄 */
   .drawer { width: 100%; max-width: 100%; }
 }
+
+/* ---------------------------------------------------------------------------
+   批量审批（M8）：勾选后才出现的操作栏 + 「部分成功」的逐条结果面板
+   --------------------------------------------------------------------------- */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--radius);
+}
+
+.batch-count {
+  font-weight: 600;
+  color: var(--brand-dark);
+  white-space: nowrap;
+}
+
+.batch-comment {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+.batch-result {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--ok-soft);
+  border: 1px solid #c9e9d5;
+  border-radius: var(--radius);
+}
+
+/* 有失败项时整体换色 —— 「不是全部成功」这件事必须在扫一眼时就能看出来 */
+.batch-result.has-fail {
+  background: var(--warn-soft);
+  border-color: #f0dcb6;
+}
+
+.batch-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.chip-207 {
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8a5a00;
+  background: #fbe9c9;
+  border-radius: 999px;
+}
+
+.batch-result-list {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.batch-result-list li {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.batch-result-list .is-ok { color: #12813c; }
+.batch-result-list .is-bad { color: #b91c1c; }
+
+@media (max-width: 820px) {
+  .batch-bar { flex-wrap: wrap; }
+  .batch-comment { flex-basis: 100%; order: -1; }
+}

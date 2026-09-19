@@ -6,6 +6,7 @@ import { logAction } from '../audit.js'
 import { serializeAttachment, serializeRequest, serializeTask } from '../serialize.js'
 import {
   actOnRequest,
+  batchActOnRequest,
   canViewRequest,
   cancelRequest,
   getRequestOr404,
@@ -217,6 +218,30 @@ export default async function requestRoutes(app) {
 
   app.post('/api/requests/:id/approve', approveAction('approve'))
   app.post('/api/requests/:id/reject', approveAction('reject'))
+
+  // 批量审批。
+  // ⚠️ 路径刻意写成两段 `/batch-approve`，而不是三段的 `/batch/approve`：
+  //    后者会被上面的 `/api/requests/:id/approve` 按注册顺序先匹配掉（:id = "batch"），
+  //    然后 Number("batch") = NaN 一路走到 SQL 里变成一个 500。
+  //    这和前端 router 里「/requests/new 必须放在 /requests/:id 之前」是**同一个坑的两种形态**：
+  //    **带通配段的路径能吞掉任何同形状的固定路径，而它不会报错，只会走进错误的处理器。**
+  app.post(
+    '/api/requests/batch-approve',
+    handler(async (req, reply) => {
+      const { ids, action, comment = '' } = req.body || {}
+      if (action !== 'approve' && action !== 'reject') throw badRequest('action 只能是 approve 或 reject')
+      if (typeof comment !== 'string') throw badRequest('comment 必须是字符串')
+      if (comment.length > 500) throw badRequest('comment 不能超过 500 个字')
+
+      const out = batchActOnRequest(ids, req.ctx.user.id, action, comment)
+      const { httpStatus, ...body } = out
+      // 200 全成功 / 207 部分成功 / 400 全失败 —— 单条原因都在 body.results 里。
+      // 全失败时额外补一句 error：通用错误处理（只看 {error}）拿不到 results，
+      // 不给它一句话，界面上就只能显示「请求失败（HTTP 400）」，等于什么都没说。
+      const payload = httpStatus === 400 ? { error: `${out.total} 条全部未能处理`, ...body } : body
+      return reply.code(httpStatus).send(payload)
+    }),
+  )
 
   app.post(
     '/api/requests/:id/cancel',

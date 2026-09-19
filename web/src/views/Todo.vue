@@ -68,6 +68,55 @@ async function act(action) {
     submitting.value = false
   }
 }
+
+// ---------------------------------------------------------------------------
+// 批量审批
+// ---------------------------------------------------------------------------
+
+const selected = ref([]) // 选中的 taskId
+const batchComment = ref('')
+const batchBusy = ref(false)
+const batchError = ref('')
+const batchResult = ref(null) // { httpStatus, succeeded, failed, results }
+
+const allSelected = computed(() => items.value.length > 0 && selected.value.length === items.value.length)
+
+function toggleOne(taskId) {
+  const i = selected.value.indexOf(taskId)
+  if (i >= 0) selected.value.splice(i, 1)
+  else selected.value.push(taskId)
+}
+
+function toggleAll() {
+  selected.value = allSelected.value ? [] : items.value.map((t) => t.taskId)
+}
+
+/** 批量接口按**单据**维度收口（同一张单据可能同时有我名下的多个 task） */
+const selectedRequestIds = computed(() =>
+  items.value.filter((t) => selected.value.includes(t.taskId)).map((t) => t.requestId),
+)
+
+async function batchAct(action) {
+  if (!selectedRequestIds.value.length) return
+  // 和单条驳回同一条规则：不写理由，申请人不知道该改什么
+  if (action === 'reject' && !batchComment.value.trim()) {
+    batchError.value = '批量驳回必须填写理由 —— 不写理由，申请人不知道该改什么'
+    return
+  }
+  batchBusy.value = true
+  batchError.value = ''
+  batchResult.value = null
+  try {
+    batchResult.value = await api.requests.batchApprove(selectedRequestIds.value, action, batchComment.value.trim())
+    selected.value = []
+    batchComment.value = ''
+    await load()
+  } catch (e) {
+    batchError.value = e.message
+  } finally {
+    batchBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -75,7 +124,10 @@ async function act(action) {
     <div class="page-head">
       <div>
         <h1 class="page-title">我的待办</h1>
-        <p class="page-desc">只列出「还轮到你、且单据仍在审批中」的任务；别人已处理或已归档的不会挂在这里。</p>
+        <p class="page-desc">
+          只列出「还轮到你、且单据仍在审批中」的任务；别人已处理或已归档的不会挂在这里。
+          勾选多条可批量处理：批量里每条互不影响（能批的先批掉），没成的那几条会逐条说明原因。
+        </p>
       </div>
       <div class="head-actions">
         <button class="btn" @click="load">刷新</button>
@@ -83,6 +135,48 @@ async function act(action) {
     </div>
 
     <div v-if="error" class="alert alert-error">{{ error }}</div>
+    <div v-if="batchError" class="alert alert-error">{{ batchError }}</div>
+
+    <!-- 批量结果：**逐条列出**。「成功 2 条、失败 1 条」这种汇总句不够用 ——
+         用户真正要知道的是「哪条没成、为什么」。这正是批量操作最容易糊弄过去的地方：
+         只报个总数，剩下的让人自己去列表里找。 -->
+    <div v-if="batchResult" class="batch-result" :class="batchResult.failed ? 'has-fail' : ''">
+      <div class="batch-result-head">
+        批量完成：成功 <b>{{ batchResult.succeeded }}</b> 条<template v-if="batchResult.failed"
+          >，失败 <b>{{ batchResult.failed }}</b> 条</template
+        >
+        <span v-if="batchResult.httpStatus === 207" class="chip-207">部分成功 207</span>
+      </div>
+      <ul class="batch-result-list">
+        <li v-for="r in batchResult.results" :key="r.id" :class="r.ok ? 'is-ok' : 'is-bad'">
+          <span class="t-mono">#{{ r.id }}</span>
+          <span v-if="r.ok">已通过，流程继续流转</span>
+          <span v-else>{{ r.message }}</span>
+        </li>
+      </ul>
+      <button class="btn-link" @click="batchResult = null">知道了</button>
+    </div>
+
+    <!-- 勾选之后才出现的批量操作栏 -->
+    <div v-if="selected.length" class="batch-bar">
+      <span class="batch-count">已选 {{ selected.length }} 条</span>
+      <input
+        v-model="batchComment"
+        class="batch-comment"
+        placeholder="批量意见（同意可留空；驳回必填）"
+        data-t="batch-comment"
+      />
+      <button class="btn btn-danger btn-sm" :disabled="batchBusy" @click="batchAct('reject')">批量驳回</button>
+      <button
+        class="btn btn-ok btn-sm"
+        :disabled="batchBusy"
+        @click="batchAct('approve')"
+        data-t="batch-approve"
+      >
+        {{ batchBusy ? '处理中…' : '批量同意' }}
+      </button>
+      <button class="btn-link" @click="selected = []">取消选择</button>
+    </div>
 
     <div class="card">
       <div v-if="loading" class="empty">加载中…</div>
@@ -91,6 +185,9 @@ async function act(action) {
         <table class="tbl">
           <thead>
             <tr>
+              <th style="width: 44px">
+                <input type="checkbox" :checked="allSelected" @change="toggleAll" aria-label="全选" />
+              </th>
               <th style="width: 72px">单号</th>
               <th>标题</th>
               <th style="width: 150px">关键信息</th>
@@ -102,6 +199,14 @@ async function act(action) {
           </thead>
           <tbody>
             <tr v-for="t in items" :key="t.taskId">
+              <td>
+                <input
+                  type="checkbox"
+                  :checked="selected.includes(t.taskId)"
+                  @change="toggleOne(t.taskId)"
+                  :aria-label="`选择单据 #${t.requestId}`"
+                />
+              </td>
               <td class="t-mono">
                 <router-link :to="`/requests/${t.requestId}`">#{{ t.requestId }}</router-link>
               </td>

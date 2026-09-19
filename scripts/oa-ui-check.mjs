@@ -918,6 +918,87 @@ async function scenario(cdp) {
   const recDays = await cdp.eval(`parseInt(document.querySelector('[data-t="att-summary-recorded"]').textContent)`)
   check('★ 统计看板的有打卡天数 >= 7（今天这条真的算进去了）', recDays >= 7, `${recDays}`)
 
+  console.log('\n--- G7. 批量审批（M8）：逐条独立 + 部分成功看得见 ---')
+  // 真机这层要证明的不是「能一次批多条」，而是三件接口层看不见的事：
+  //   ① 勾选框真的绑上了（不是渲染出来好看而已）
+  //   ② 结果面板**逐条**列出，而不是只报一个总数
+  //   ③ 「部分成功」在界面上说得清 —— 这条必须靠「别人先批了」来构造：
+  //      待办列表天然只列「还没人处理的」，部分成功只会从这种数据陈旧里冒出来。
+  await logout(cdp)
+  await loginAs(cdp, 'ops02')
+  const batchIds = []
+  for (const n of [1, 2]) {
+    await cdp.nav(`${BASE}/requests/new`)
+    await cdp.waitFor(`!!document.querySelector('[data-t=title]')`, '新建页就绪')
+    await cdp.eval(`window.__t.click('请假申请')`)
+    await cdp.eval(`window.__t.set('[data-t=title]', ${JSON.stringify(`批量验证单 ${Date.now()}-${n}`)})`)
+    await cdp.eval(`window.__t.set('[data-field=startDate]', '2026-10-12')`)
+    await cdp.eval(`window.__t.set('[data-field=endDate]', '2026-10-13')`)
+    await cdp.eval(`window.__t.set('[data-field=reason]', '批量审批真机验证')`)
+    await cdp.eval(`window.__t.click('保存并提交')`)
+    await cdp.waitFor(`/^\\/requests\\/\\d+$/.test(location.pathname)`, '提交后跳详情')
+    batchIds.push((await cdp.eval('location.pathname')).split('/').pop())
+  }
+
+  await logout(cdp)
+  await loginAs(cdp, 'ops01')
+  await goTodo(cdp)
+
+  const boxCount = await cdp.eval(`document.querySelectorAll('table.tbl tbody input[type=checkbox]').length`)
+  check('待办列表每行都有勾选框', boxCount >= 2, `${boxCount} 个`)
+
+  const picked = await cdp.eval(`(() => {
+    const want = ${JSON.stringify(batchIds)}
+    let n = 0
+    for (const r of document.querySelectorAll('table.tbl tbody tr')) {
+      const a = r.querySelector('a[href^="/requests/"]')
+      if (!a) continue
+      if (!want.includes(a.getAttribute('href').split('/').pop())) continue
+      const cb = r.querySelector('input[type=checkbox]')
+      if (cb) { cb.click(); n++ }
+    }
+    return n
+  })()`)
+  check('★ 勾选框点得动（勾中刚提交的两张单）', picked === 2, `勾中 ${picked} 个`)
+  await cdp.waitFor(`!!document.querySelector('.batch-bar')`, '批量操作栏出现')
+  const barText = await cdp.eval(`document.querySelector('.batch-bar').innerText.replace(/\\s+/g, ' ')`)
+  check('★ 勾选后出现批量操作栏并写明已选条数', barText.includes('已选 2 条'), barText.slice(0, 60))
+
+  // 构造「别人先批了」：在页面里直接调接口把其中一张推走（等价于另一个标签页/另一个审批人）
+  const pre = await cdp.eval(`fetch('/api/requests/${batchIds[0]}/approve', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + localStorage.getItem('oa.token'), 'content-type': 'application/json' },
+    body: JSON.stringify({ comment: '抢先处理' }),
+  }).then(r => r.status)`)
+  check('（构造数据陈旧）其中一张已被别人先批掉', pre === 200, `HTTP ${pre}`)
+
+  await cdp.eval(`window.__t.set('[data-t=batch-comment]', '批量同意，已核对')`)
+  await cdp.eval(`document.querySelector('[data-t=batch-approve]').click()`)
+  await cdp.waitFor(`!!document.querySelector('.batch-result')`, '批量结果面板出现')
+
+  const resHead = await cdp.eval(`document.querySelector('.batch-result-head').innerText.replace(/\\s+/g, ' ')`)
+  check(
+    '★★ 结果面板如实报「成功 1 条、失败 1 条」（部分成功在界面上说得清）',
+    resHead.includes('成功 1') && resHead.includes('失败 1'),
+    resHead,
+  )
+  const batchLines = await cdp.eval(
+    `[...document.querySelectorAll('.batch-result-list li')].map(li => li.innerText.replace(/\\s+/g, ' ').trim())`,
+  )
+  check('★ 逐条列出而不是只报总数', batchLines.length === 2, batchLines.join(' / ').slice(0, 140))
+  check(
+    '失败那条给的是后端原话（不是前端自己编一句「操作失败」）',
+    batchLines.some((l) => l.includes('不是当前步骤的审批人')),
+    batchLines.find((l) => !l.includes('已通过')) || '(没找到)',
+  )
+
+  // 刷新后：两张单都不该再挂在 ops01 的待办里（都被推进到第 2 步了）
+  await goTodo(cdp)
+  const stillThere = await cdp.eval(
+    `[...document.querySelectorAll('table.tbl tbody tr')].filter(r => ${JSON.stringify(batchIds)}.some(id => r.textContent.includes('#' + id))).length`,
+  )
+  check('批量处理后两张单都离开了他的待办（推进到第 2 步）', stillThere === 0, `还剩 ${stillThere} 行`)
+
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   await goDetail(cdp, reqId2)
