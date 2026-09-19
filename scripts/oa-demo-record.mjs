@@ -1,6 +1,6 @@
 // ============================================================================
-// 演示录屏：把一条完整业务链路（登录 → 建单 → 两级审批 → 归档 → 通知 → 导出）
-// 录成一段 webm，给「别人第一眼」用。
+// 演示录屏：把一条完整业务链路（登录 → 建单 → 两级审批 → 归档 → 通知 → 导出 →
+// 批量审批）录成一段 webm，给「别人第一眼」用。
 //
 // 零依赖：
 //   · 抓帧用 CDP Page.startScreencast（系统已装的 Chrome，不下载 Chromium）
@@ -331,6 +331,69 @@ async function runDemo(cdp) {
     25000,
   )
   await sleep(1600)
+
+  // ⑭ 批量审批（M8）：先攒出几张待批单
+  const stamp = Date.now().toString().slice(-6)
+  const batchIds = []
+  for (const n of [1, 2, 3]) {
+    await cdp.go(
+      `${BASE}/requests/new`,
+      `!!document.querySelector('[data-t=title]')`,
+      n === 1 ? '⑭ 再提交三张单 · 给批量审批备好待办' : null,
+    )
+    await cdp.eval(`window.__t.click('请假申请')`)
+    await sleep(300)
+    await cdp.eval(`window.__t.set('[data-t=title]', ${JSON.stringify(`批量演示单 ${stamp}-${n}`)})`)
+    await cdp.eval(`window.__t.set('[data-field=startDate]', '2026-10-12')`)
+    await cdp.eval(`window.__t.set('[data-field=endDate]', '2026-10-13')`)
+    await sleep(300)
+    await cdp.eval(`window.__t.set('[data-field=reason]', '批量审批演示用，工作已安排交接。')`)
+    await sleep(500)
+    await cdp.eval(`window.__t.click('保存并提交')`)
+    await cdp.waitFor(`/^\\/requests\\/\\d+$/.test(location.pathname)`, '提交后跳详情')
+    batchIds.push((await cdp.eval('location.pathname')).split('/').pop())
+    await sleep(600)
+  }
+
+  // ⑮ 审批人登录 → 待办多选
+  await logout(cdp)
+  await loginAs(cdp, 'ops01', '⑮ 审批人 王东 · 待办里现在有好几张')
+  await cdp.go(
+    `${BASE}/todo`,
+    `document.querySelectorAll('table.tbl tbody input[type=checkbox]').length >= 3`,
+    '⑮ 待办列表支持多选 · 一次处理一批',
+  )
+  await sleep(1300)
+  const picked = await cdp.eval(`(() => {
+    const want = ${JSON.stringify(batchIds)}
+    let n = 0
+    for (const r of document.querySelectorAll('table.tbl tbody tr')) {
+      const a = r.querySelector('a[href^="/requests/"]')
+      if (!a || !want.includes(a.getAttribute('href').split('/').pop())) continue
+      const cb = r.querySelector('input[type=checkbox]')
+      if (cb) { cb.click(); n++ }
+    }
+    return n
+  })()`)
+  if (picked !== 3) throw new Error(`只勾中 ${picked} 张，期望 3 张`)
+  await cdp.waitFor(`!!document.querySelector('.batch-bar')`, '批量操作栏出现')
+  await sleep(900)
+
+  // 制造「部分成功」：其中一张已被别处先批掉（等价于另一个审批人抢先处理）
+  const pre = await cdp.eval(`fetch('/api/requests/${batchIds[0]}/approve', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + localStorage.getItem('oa.token'), 'content-type': 'application/json' },
+    body: JSON.stringify({ comment: '抢先处理' }),
+  }).then(r => r.status)`)
+  if (pre !== 200) throw new Error(`构造数据陈旧失败：HTTP ${pre}`)
+
+  await cdp.eval(captionScript('⑯ 批量同意 · 逐条结果各带原因（一张已被别处处理 → 部分成功 207）'))
+  await sleep(700)
+  await cdp.eval(`window.__t.set('[data-t=batch-comment]', '批量同意，已核对')`)
+  await sleep(800)
+  await cdp.eval(`document.querySelector('[data-t=batch-approve]').click()`)
+  await cdp.waitFor(`!!document.querySelector('.batch-result')`, '批量结果面板出现')
+  await sleep(2600)
 
   return reqId
 }

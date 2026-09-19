@@ -199,12 +199,12 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 
 ### 演示录屏
 
-静图证明「页面长什么样」，视频证明「这条链路真的跑得通」——30 秒走完
-**登录 → 建单 → 两级审批 → 归档 → 消息中心 → 导出 CSV → 统计 → 考勤**，每一步左下角带步骤字幕（① … ⑬）。
+静图证明「页面长什么样」，视频证明「这条链路真的跑得通」——40 余秒走完
+**登录 → 建单 → 两级审批 → 归档 → 消息中心 → 导出 CSV → 统计 → 考勤 → 批量审批**，每一步左下角带步骤字幕（① … ⑯）。
 
 ```bash
 npm start        # 另开一个终端
-npm run demo     # → docs/demo/oa-demo.webm（1280x800 · 约 30 秒 · 约 2 MB）
+npm run demo     # → docs/demo/oa-demo.webm（1280x800 · 约 47 秒 · 约 3 MB）
 ```
 
 怎么做到**零依赖**（本机没装 ffmpeg 也照样出片）：
@@ -228,6 +228,9 @@ npm run demo     # → docs/demo/oa-demo.webm（1280x800 · 约 30 秒 · 约 2 
 >
 > 想核对「视频里到底录到了什么」：`DEMO_STILLS=1 npm run demo`，会把采样帧落成 jpg 到
 > `docs/demo/frames/`（调试产物，已 gitignore）。
+>
+> 结尾那段「批量审批 · **部分成功 207**」不是顺其自然发生的：待办天然只列**未处理**的任务，
+> 所以脚本在页面里**抢先批掉其中一张**（等价于另一个审批人先动手），再看批量结果怎么如实逐条交代。
 
 ---
 
@@ -818,7 +821,7 @@ office-oa/
 │     └─ views/                 15 个视图（含 Meetings / Stats / Attendance）
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ docs/demo/                   演示录屏（由 scripts/oa-demo-record.mjs 生成，30 秒走完整链路）
+├─ docs/demo/                   演示录屏（由 scripts/oa-demo-record.mjs 生成，47 秒走完整链路）
 ├─ tests/                       setup + helpers + 14 个测试文件（295 用例，含 attendance / consistency / batch-approve）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
