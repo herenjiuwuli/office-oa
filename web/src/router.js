@@ -14,6 +14,7 @@ import Flows from './views/Flows.vue'
 import Announcements from './views/Announcements.vue'
 import AuditLogs from './views/AuditLogs.vue'
 import Meetings from './views/Meetings.vue'
+import Stats from './views/Stats.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -34,6 +35,7 @@ const router = createRouter({
     { path: '/announcements', component: Announcements },
     { path: '/audit-logs', component: AuditLogs },
     { path: '/meetings', component: Meetings },
+    { path: '/stats', component: Stats },
 
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

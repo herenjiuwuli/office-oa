@@ -1,4 +1,4 @@
-# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · M3 站内通知完成：消息中心 + 收件人隔离 + 引擎同事务挂钩 · **M4 单据导出 CSV 完成**：自写 CSV 转义 + ⭐公式注入防护 + BOM + 只导出你有权看到的，并**倒逼测试平台补出「断言响应头」能力** · **M5 会议室预订完成**：30 分钟槽模型 + ⭐冲突防线下沉到数据库唯一约束）
+# office-oa · 办公 OA 系统（M1 后端 + 前端完成 · M2 全部完成：Playwright E2E + CI + AI 摘要 + 审批人按部门收敛 + token 黑名单 + 附件上传 · M3 站内通知完成：消息中心 + 收件人隔离 + 引擎同事务挂钩 · **M4 单据导出 CSV 完成**：自写 CSV 转义 + ⭐公式注入防护 + BOM + 只导出你有权看到的，并**倒逼测试平台补出「断言响应头」能力** · **M5 会议室预订完成**：30 分钟槽模型 + ⭐冲突防线下沉到数据库唯一约束 · **M6 统计报表完成**：数据范围权限收敛 + ⭐越权不静默降级，并**倒逼测试平台补出「发 query 参数」能力**）
 
 > **这不是「又一个管理系统」，而是一个「专门用来被测试的 OA」。**
 > 自用练手 + 求职作品。需求原型取自真实 MCN 办公场景（请假 / 活动物料 / 采购审批），
@@ -29,7 +29,7 @@
 | 附件 | **@fastify/multipart**（官方插件，纯 JS） | 上传走 multipart；类型/大小/路径安全见「附件上传」一节 |
 | 前端 | **Vue 3.5 + vite + vue-router** | 纯 CSS、无 UI 框架、**不用 Pinia**（单例 reactive 就够） |
 | 前端测试 | 自写三个零依赖静态扫描脚本 | 抓「build 过但运行时 ReferenceError」 |
-| 接口测试 | **vitest** | **229 条**用例，见 `tests/` |
+| 接口测试 | **vitest** | **240 条**用例，见 `tests/` |
 | 真机验收 | 自写零依赖 CDP 脚本 | 走真实 Chrome 跑完审批全链路，见 `scripts/oa-ui-check.mjs` |
 | UI 自动化 | **Playwright**（`channel: 'chrome'`） | **13 条**用例，见 `e2e/`。**不下载浏览器**，详见「UI 自动化」一节 |
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → UI 测试，见 `.github/workflows/ci.yml` |
@@ -54,9 +54,9 @@ npm run dev                         # 打开 http://127.0.0.1:5273
 npm run build
 npm start                           # 打开 http://127.0.0.1:3200
 
-npm test                            # ② 跑全部 229 条接口用例
+npm test                            # ② 跑全部 240 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
-node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（36 断言）
+node scripts/oa-ui-check.mjs        # ③ 真机浏览器跑完「提交→两级审批→归档 + 驳回重提」（68 断言）
 npm run test:e2e                    # ③ Playwright 跑同一链路（13 条，自动起 3300 端口的服务）
 npm run verify                      # 一条命令：静态扫描 + 构建 + 接口测试 + UI 测试（= CI 跑的东西）
 ```
@@ -116,6 +116,7 @@ node seed.js --force
 | GET | `/api/room-bookings?date=` | 登录 | 某一天的预订（默认今天；只含有效预订） |
 | POST | `/api/room-bookings` | 登录 | **预订（M5）**：冲突由数据库唯一约束判 → 409 并写明被谁占了哪一段 |
 | DELETE | `/api/room-bookings/:id` | 本人 / `room:manage` | 取消（横向越权 → 403；重复取消 → 409） |
+| GET | `/api/stats/overview?scope=` | 登录 | **统计看板（M6）**：按 `scope=mine/dept/all` 聚合单据（状态分布 / 类型 / 近 6 月 / 审批时效 / 会议室使用）。**范围越界 → 403，不静默降级**（复用 `request:read:all`，不新开权限码） |
 | GET | `/api/ai/status` | 登录 | AI 是否已启用（前端据此决定按钮置灰） |
 | POST | `/api/requests/:id/ai-summary` | 申请人 / 审批人 / `request:read:all` | 生成审批摘要。**AI 不可用时也返回 200 + `available:false`**，不抛 5xx |
 | POST | `/api/requests/:id/attachments` | 申请人 + 可编辑态 | 上传附件（multipart，字段名 `file`）。类型看真实字节，大小/数量有上限 |
@@ -151,6 +152,7 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 流程模板 | `/flows` | 只读，展示步骤 / 审批人类型 / 或签会签 |
 | 公告 | `/announcements` | 列表 + 发布抽屉（`announcement:write`） |
 | 会议室 | `/meetings` | **占用时间轴（M5）**：30 分钟一格、停用房斜纹；预订表单；冲突时直接展示后端 409 原文（谁、占了哪一段）；取消按钮按后端 `canCancel` 渲染 |
+| 统计看板 | `/stats` | **数据范围收敛（M6）**：`mine/dept/all` 三个 tab（按权限出现）；纯 CSS 柱状图；越权时后端 403、前端不自己编造数据 |
 | 审计日志 | `/audit-logs` | 需 `audit:read`（仅总经理） |
 | 消息中心 | `/notifications` | 全部 / 未读两个 tab + 侧边栏未读角标（跨组件共享 `reactive`，标已读当场 -1） |
 
@@ -186,6 +188,7 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 员工管理（RBAC） | `docs/screenshots/08-员工管理-RBAC.png` |
 | **越权：普通员工访问员工管理 → 后端真实 403** | `docs/screenshots/09-越权-后端真实403.png` |
 | 移动端 390px | `docs/screenshots/10-移动端390.png` |
+| **统计看板（M6）**：三个范围 tab + 纯 CSS 柱状图 | `docs/screenshots/13b-统计看板-M6.png` |
 
 ---
 
@@ -300,6 +303,17 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 
 > ⭐ 一句话：**应用层的检查可以被绕过，数据库的唯一约束绕不过。并发防线要放在离数据最近的地方。**
 
+### 11. ⭐ 统计报表：数据范围权限的收敛点（M6）
+
+聚合接口「按 scope 返回不同范围数据」这件事，越权面比单据详情更大——单据详情越权只漏**一行**，统计越权能让员工**拼出全公司组织画像**（反复按状态请求就能把每个部门的人数摸出来）。所以范围是硬边界，不是软提示：
+
+- **scope 复用既有 `request:read:all`**，不再开新的权限码（`stats:read` 之类）。理由：聚合的本质是「能不能看别人的单据」，这已经是 `request:read:all` 的语义了，新开一个码只会多出一条要维护、又容易和老码不一致的权限。`maxScopeFor(ctx)` 把边界收成三档：有 `request:read:all` → `all`；是 `dept_manager`/`boss` → `dept`；其余 → `mine`。
+- **越界直接 403，不静默降级到 mine**。员工传 `scope=all` 时，返回 403「超出你的数据范围」，而不是「悄悄按 mine 算、还回 200」。前者的危害是「拿不到全量数据」，后者的危害是「**测出来是 200，于是断言永远通过，越权口子没人发现**」——这正是写用例时抓到的真问题。
+- **一次拼好 WHERE，mine 和 dept 各替换一处占位**（`scoped(sql)` 把 `__WHERE__` 换成 `applicant_id = ?` 或 `applicant_id IN (SELECT id FROM users WHERE dept_id = ?)`）。两个范围共用同一套聚合 SQL，避免「mine 对、dept 错」这种分叉 bug。
+- 审批时效只用 `approved` 单算（被驳回的不算「花了多少天」），没有任何单据时 `avgHours` 返回 `null` 而不是 `0`——`0` 会被误读成「秒批」。
+
+> ⭐ **这一轮又是闭环**：统计接口按 `?scope=` 返回不同数据，而测试平台当时的执行器**根本发不出 query string**——用例里写的 `query` 在入库时被丢掉（表里没有这一列），于是「员工请求 scope=all 应 403」这种断言永远测不到（服务器压根没收到参数，默认按 maxScope 返回 200）。两条都在这一轮补掉了：执行器加 query 拼接 + 持久化层加 `query_json` 列 + 平台新增 6 条断言（OA-73…78）。**SUT 长新面，工具长新能力，和 M4 导出的头断言是同一个故事。**
+
 ---
 
 ## 测试（三层）
@@ -311,16 +325,16 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
-| ② 接口测试 | `npm test` | **229 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、**导出的 CSV 转义 / 公式注入 / 可见性 / 响应头**（看不到界面） |
-| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **65 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
+| ② 接口测试 | `npm test` | **240 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、**导出的 CSV 转义 / 公式注入 / 可见性 / 响应头**（看不到界面） |
+| ③ UI 测试 | `npm run test:e2e`（Playwright）／`node scripts/oa-ui-check.mjs`（自写 CDP） | **13 条** / **68 条断言** | 布局、跳转、真实 403、归档后按钮该不该在、AI 卡片是否按配置置灰 |
 
-> ⭐ 这三层**不是重复，是递进**：第 ② 层 84 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
+> ⭐ 这三层**不是重复，是递进**：第 ② 层 240 条全绿的时候，第 ③ 层照样抓出了两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）。
 > **测试的层次决定你能看见什么层次的缺陷。**
 
 ### 接口测试（vitest）
 
-- **229 条用例，11 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）
+- **240 条用例，12 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）/ `meetings`（M5 会议室）/ `stats`（M6 统计报表）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -332,7 +346,7 @@ npm run verify     # 一条命令跑完下面三层 + 构建（本地复现 CI�
 
 ```bash
 npm start                        # 或 npm run dev（dev 时改传 http://127.0.0.1:5273）
-node scripts/oa-ui-check.mjs     # 65 条断言，走一段就全过
+node scripts/oa-ui-check.mjs     # 68 条断言，走一段就全过
 ```
 
 用系统已装的 Chrome + Node 内置 WebSocket 直连 CDP，**不下载 Chromium、零 npm 依赖**。断言按业务语义写，覆盖：
@@ -349,6 +363,7 @@ node scripts/oa-ui-check.mjs     # 65 条断言，走一段就全过
 | G2 消息中心 | 未读角标 = 未读行数；标已读后角标**当场 -1**（跨组件共享状态）；「全部标为已读」后角标消失；申请人看不到「待你审批」（收件人隔离） |
 | G3 导出 CSV（M4） | 列表有「导出 CSV」按钮且点得动；成功提示写明**条数 + 后端给的文件名** —— 文件名是从 `Content-Disposition` 读出来的，所以这条同时证明了「token 带上了、响应头也读到了」 |
 | G4 会议室（M5） | 时间轴 28 格；订成功后占用格出现；**同时段再订 → 页面原样显示 409 原文（谁占了哪一段）**；别人的预订没有「取消」按钮（canCancel 由后端给）；本人取消后占用格释放 |
+| G5 统计看板（M6） | 员工只渲染「我的」一个范围 tab（dept/all 不出现）；看板渲染出自己的单据数；**切范围后数字真的变了**（all 与 mine 不是同一份数据换皮）；越界的 403 由 `tests/stats.test.js` + 平台 OA-74/76 守住 |
 | H 移动端 | 真改视口到 390px，量 `scrollWidth`（不靠截图，截图会造假象） |
 | I 登出 | 回到 `/login` 且 localStorage 里的 token 已清除 |
 
@@ -358,7 +373,7 @@ node scripts/oa-ui-check.mjs     # 65 条断言，走一段就全过
 1. **登录页旁边渲染出了侧边栏**（`App.vue` 无条件套外壳）——当时所有接口用例和静态扫描全绿，**因为断言只看了 pathname 和按钮，没看布局**；
 2. **归档单据上给已审过的审批人显示了「但当前还没轮到你」**——文案分支顺序写反了，单据都结束了还说"没轮到你"。
 
-这两条都不是「代码报错」，是 58 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
+这两条都不是「代码报错」，是 68 条业务断言逼出来的。光靠 `npm test` + `npm run check:frontend` 一个都发现不了。
 
 ---
 
@@ -375,7 +390,7 @@ npm run verify          # 本地一条命令复现整条 CI：静态扫描 → �
 | | `scripts/oa-ui-check.mjs`（自写 CDP） | `e2e/`（Playwright） |
 |---|---|---|
 | 依赖 | **零**，系统 Chrome + Node 内置 WebSocket | 需装 `@playwright/test` |
-| 断言/重试/报告 | 自己写（65 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
+| 断言/重试/报告 | 自己写（68 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
 | 失败留痕 | 只有控制台输出 | trace 可回放 + 失败截图 |
 | 定位 | **本机随手验一遍**（离线也能跑） | **接 CI 做回归** |
 
@@ -558,7 +573,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 | 不做 | 原因 |
 |---|---|
 | 权限管理界面 | 权限「检查」才是核心；M1 用 `server/permissions.js` 常量 + 种子数据。**M2 已补**（`Users.vue`） |
-| 考勤打卡 / 统计报表 | 与审批流主干无关，属纯 CRUD |
+| 考勤打卡 | 与审批流主干无关，属纯 CRUD（**M6 已补统计报表**，考勤仍待做） |
 | 文件附件上传 | M1 用「链接字段」代替；**M2 已补**（见「附件上传」一节） |
 | AI 审批摘要 | M1 不做；**M2 已补**（见「AI 审批摘要」一节）。它是**可选能力**，没配 key 会自动降级，不影响任何主流程 |
 | 消息通知（站内信 / 邮件） | **M3 已补**：站内通知（消息中心 + 收件人隔离 + 引擎同事务挂钩），见「站内通知（M3）」一节 |
@@ -592,6 +607,12 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 1. ✅ **会议室预订** —— `meeting_rooms` + `room_bookings` + `room_slots`（**18 张表**）+ `server/routes/meetings.js` + 前端 `Meetings.vue`（div-grid 占用时间轴）+ **25 条接口用例 + 7 条真机断言**；测试平台侧同步补 **12 条**用例（OA-61…72，套件 60→72）
 2. ✅ **顺带修掉一个 UI 真 bug** —— 重拍截图导览时发现单据中心「文案说默认看全部、实际默认只看我的」，admin 打开 0 条；已在 M5 提交前修掉
 3. ⭐ **冲突防线的落点**：时间折算成 30 分钟槽序号，预订 = 往 `room_slots`（主键 `room_id+date+slot`）插占用行；**同一槽插第二行必然撞 UNIQUE** —— 防线在数据库，不在「先查再插」的应用层（有专门用例证明：绕过 API 直接写库也插不进冲突槽）。见「关键设计决策」第 10 条
+
+### M6 进度
+
+1. ✅ **统计报表** —— `server/routes/stats.js`（按 `scope=mine/dept/all` 聚合：状态分布 / 类型 / 近 6 月趋势 / 审批时效 / 会议室使用）+ `web/src/views/Stats.vue`（纯 CSS 柱状图、范围 tab 按 `maxScope` 渲染、越界不自己编造数据）+ **11 条接口用例 + 4 条真机断言**。见「关键设计决策」第 11 条
+2. ✅ **顺带倒逼测试平台补能力** —— 统计接口按 `?scope=` 返回不同数据，而平台执行器当时**发不出 query 参数**（而且用例入库时 `query` 字段因为缺列被丢掉）。这一轮补了：执行器 query 拼接 + 持久化层 `query_json` 列 + 归一化函数 + 平台新增 6 条断言（OA-73…78，套件 72→78），`tests/runnerQuery.test.js` 把行为钉死
+3. ⭐ **范围权限的落点**：聚合复用既有 `request:read:all`，不新开权限码；越界 **403 不静默降级到 mine**——「员工请求 scope=all 应 403」在平台侧真正跑出来后，才发现执行器把 query 吃了，否则这条断言会永远绿（服务器没收到参数、按 maxScope 回 200）
 
 ---
 
@@ -633,7 +654,7 @@ office-oa/
 │  ├─ lib/
 │  │  ├─ ai.js                ⭐ 审批摘要（prompt 注入防护 / 优雅降级 / 输出规范化）
 │  │  └─ storage.js           ⭐ 附件存储（魔数嗅探 / 路径防护 / 大小上限）
-│  └─ routes/                   auth / departments / users / requests / attachments / notifications / todo / announcements / auditLogs / ai
+│  └─ routes/                   auth / departments / users / requests / attachments / notifications / todo / announcements / auditLogs / ai / meetings / stats
 ├─ web/                         前端（独立 package.json）
 │  ├─ index.html
 │  ├─ vite.config.js            dev 端口 5273，代理 /api → 3200
@@ -645,16 +666,16 @@ office-oa/
 │     ├─ labels.js              状态机 / 动作 / 审批人类型的展示映射
 │     ├─ forms.js               单据表单字段元数据（渲染 + 归一化 + 必填校验）
 │     ├─ style.css              纯 CSS 设计系统（含 820px 响应式）
-│     └─ views/                 12 个视图
+│     └─ views/                 14 个视图（含 Meetings / Stats）
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 11 个测试文件（229 用例）
+├─ tests/                       setup + helpers + 12 个测试文件（240 用例）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）
    ├─ check-vue-tpl.mjs         静态扫描：模板里未声明的组件/事件函数
    ├─ check-vue-refvalue.mjs    静态扫描：ref 忘了 .value
-   ├─ oa-ui-check.mjs           真机浏览器验收：审批全链路 + 越权 + 移动端（36 断言）
+   ├─ oa-ui-check.mjs           真机浏览器验收：审批全链路 + 越权 + 移动端（68 断言）
    ├─ oa-screenshots.mjs        真机截图
    └─ push-main.sh              推主分支（直连；网络不通时打印替代命令）
 ```

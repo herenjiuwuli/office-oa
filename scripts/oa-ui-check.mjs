@@ -634,6 +634,32 @@ async function scenario(cdp) {
   const leftCells = await cdp.eval(`document.querySelectorAll('.tl-cell.taken').length`)
   check('取消后时间轴占用格被释放', leftCells === 0, `剩 ${leftCells} 格`)
 
+  console.log('\n--- G5. 统计看板（M6）：数据范围收敛 ---')
+  // 员工视角：只有「我的」一个范围可看（tab 不渲染 = 想点都没有，但真正的防线在后端 403）
+  await cdp.nav(`${BASE}/stats`)
+  await cdp.waitFor(`document.querySelectorAll('.stat-card').length >= 5`, '统计卡片渲染')
+  const empTabs = await cdp.eval(`document.querySelectorAll('.tabs .btn').length`)
+  check('★ 员工只有「我的」一个范围（dept/all 的 tab 不渲染）', empTabs === 1, `${empTabs} 个 tab`)
+  const empNum = await cdp.eval(`document.querySelector('.stat-num').innerText.trim()`)
+  check('员工看板渲染出自己的单据数', /^\d+$/.test(empNum), empNum)
+
+  // admin：三个范围都可见，默认全公司；切到「我的」数字必须变（证明范围真的在过滤，不是换皮）
+  await logout(cdp)
+  await loginAs(cdp, 'admin')
+  await cdp.nav(`${BASE}/stats`)
+  await cdp.waitFor(`document.querySelectorAll('.tabs .btn').length === 3`, 'admin 三个范围 tab')
+  await cdp.waitFor(`document.querySelector('.tabs .btn-primary').textContent.includes('全公司')`, '默认落在全公司')
+  const allNum = await cdp.eval(`parseInt(document.querySelector('.stat-num').innerText)`)
+  await cdp.eval(`window.__t.click('我的')`)
+  await cdp.waitFor(`document.querySelector('.tabs .btn-primary').textContent.includes('我的')`, '切到我的', 8000)
+  await sleep(500) // 等 load 完成（tab 先变、数字后到）
+  const mineNum = await cdp.eval(`parseInt(document.querySelector('.stat-num').innerText)`)
+  check(
+    '★ 切范围后数字真的变了（all → mine 不是同一份数据换皮）',
+    Number.isFinite(mineNum) && mineNum <= allNum,
+    `all=${allNum} mine=${mineNum}`,
+  )
+
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   await goDetail(cdp, reqId2)

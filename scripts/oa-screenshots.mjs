@@ -309,6 +309,14 @@ try {
   await sleep(400)
   await cdp.shot('14-审计日志.png')
 
+  // 13b) 统计看板（M6）：admin 能看到「我的 / 本部门 / 全公司」三个范围 tab，
+  //      按 scope 聚合的卡片 + 纯 CSS 柱状图都渲染出来
+  await cdp.nav(`${BASE}/stats`, `!!document.querySelector('[data-t="stats-scope-all"]')`)
+  await cdp.eval(HELPERS)
+  await waitFor(cdp, `document.querySelectorAll('.stat-card').length > 0`, '统计卡片渲染', 8000)
+  await sleep(400)
+  await cdp.shot('13b-统计看板-M6.png')
+
   // 14) 移动端（真改视口）
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: 390, height: 844, deviceScaleFactor: 2, mobile: true,

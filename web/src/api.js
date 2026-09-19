@@ -211,4 +211,9 @@ export const api = {
     create: (data) => request('/room-bookings', { method: 'POST', body: data }),
     cancel: (id) => request(`/room-bookings/${id}`, { method: 'DELETE' }),
   },
+
+  // --- M6 统计 ---
+  stats: {
+    overview: (query) => request('/stats/overview', { query }),
+  },
 }

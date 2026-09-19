@@ -1,5 +1,7 @@
 // 扫 src/ 下所有 .vue：报告 script 里「用 .value 但未声明」的 ref 漏声明
-// 已知唯一误报：DOM 事件对象属性 `e.target.value`
+// 已知接受的取舍：函数参数 / for-of 循环变量也进 declared（如 map((opt) => opt.value)）。
+// 代价：参数名恰好与顶层 ref 同名且真的漏声明时会被漏报 —— 漏报比误报好，
+// 误报会让人养成「扫描器喊狼来了就 ignore」的习惯，那才是真危险。
 //
 // 用法：node scripts/check-vue-refvalue.mjs <views-dir>  （默认 src/views）
 import { readdirSync, readFileSync } from 'node:fs'
@@ -30,6 +32,24 @@ for (const f of files) {
       if (n) declared.add(n)
     })
   }
+  // 函数参数（箭头函数 + 普通函数，含解构）与 for 循环变量：
+  // `opt.value` / `({ value }) => ...` 里的是普通属性访问，不是 ref。
+  // 注意箭头函数常写 `((opt) => ({...})`——返回对象字面量，所以只认 `) =>` 不认 `) => {`
+  for (const mm of code.matchAll(/\(([^()]*)\)\s*=>/g)) {
+    mm[1]
+      .split(',')
+      .map((s) => s.trim().split(':').pop().trim().replace(/^\{|\}$/g, '').trim())
+      .filter((n) => /^[A-Za-z_$][\w$]*$/.test(n))
+      .forEach((n) => declared.add(n))
+  }
+  for (const mm of code.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^()]*)\)/g)) {
+    mm[1]
+      .split(',')
+      .map((s) => s.trim().split(':')[0].trim())
+      .filter((n) => /^[A-Za-z_$][\w$]*$/.test(n))
+      .forEach((n) => declared.add(n))
+  }
+  for (const mm of code.matchAll(/\bfor\s*\(\s*(?:const|let)\s+([A-Za-z_$][\w$]*)/g)) declared.add(mm[1])
 
   const used = new Set()
   for (const mm of code.matchAll(/\b([A-Za-z_$][\w$]*)\.value\b/g)) {
