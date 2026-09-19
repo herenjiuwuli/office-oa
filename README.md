@@ -357,7 +357,7 @@ npm run verify     # 一条命令跑完 ①②③ + 构建（本地复现 CI 的
 
 ### 接口测试（vitest）
 
-- **259 条用例，13 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）/ `meetings`（M5 会议室）/ `stats`（M6 统计报表）/ `attendance`（M7 考勤：打卡幂等 / 本人记录 / scope 越权 403 / 数字自洽）
+- **259 条用例，12 个文件**：`auth` / `permission` / `flow` / `requests` / `ai` / `attachments` / `attachments-edge`（附件的越权 / 并发 / 边界）/ `notifications`（M3 站内通知）/ `export`（M4 导出 CSV）/ `meetings`（M5 会议室）/ `stats`（M6 统计报表）/ `attendance`（M7 考勤：打卡幂等 / 本人记录 / scope 越权 403 / 数字自洽）
 - 其中**越权 + 边界**类 ≥ 20 条（纵向越权、横向越权、自批、token 篡改、停用账号、上级为空、并发抢单、状态机非法流转）
 - 隔离方式：`tests/setup.js` 把 `DB_PATH` 设成 `:memory:`，每个测试文件跑在自己的环境里 → 各自一份内存库，天然互不干扰
 - 每个用例前 `resetDb()` 丢掉旧连接、重开空库再灌种子 → 用例之间零耦合
@@ -415,7 +415,7 @@ npm run verify          # 本地一条命令复现整条 CI：静态扫描 → �
 | | `scripts/oa-ui-check.mjs`（自写 CDP） | `e2e/`（Playwright） |
 |---|---|---|
 | 依赖 | **零**，系统 Chrome + Node 内置 WebSocket | 需装 `@playwright/test` |
-| 断言/重试/报告 | 自己写（68 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
+| 断言/重试/报告 | 自己写（72 条手写断言） | 框架自带（自动等待、重试、trace、HTML 报告） |
 | 失败留痕 | 只有控制台输出 | trace 可回放 + 失败截图 |
 | 定位 | **本机随手验一遍**（离线也能跑） | **接 CI 做回归** |
 
