@@ -58,6 +58,7 @@ npm test                            # ② 跑全部 271 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 npm run test:e2e                    # ③ Playwright 跑审批链路（13 条，自动起 3300 端口的服务）
 node scripts/oa-ui-check.mjs        # ④ 真机 CDP 断言 73 条（服务需先起来；覆盖会议室/统计/考勤）
+npm run demo                        # ⑤ 演示录屏 → docs/demo/oa-demo.webm（零依赖：本机不需要 ffmpeg）
 npm run verify                      # 本地一条命令复现 CI 的 ①②③（④ 需要先起服务，所以单独跑）
 ```
 
@@ -194,6 +195,38 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 | 移动端 390px | `docs/screenshots/10-移动端390.png` |
 | **统计看板（M6）**：三个范围 tab + 纯 CSS 柱状图 | `docs/screenshots/13b-统计看板-M6.png` |
 | **考勤打卡（M7）**：当天上班/下班打卡 + 统计数字卡 | `docs/screenshots/13c-考勤打卡-M7.png` |
+
+### 演示录屏
+
+静图证明「页面长什么样」，视频证明「这条链路真的跑得通」——30 秒走完
+**登录 → 建单 → 两级审批 → 归档 → 消息中心 → 导出 CSV → 统计 → 考勤**，每一步左下角带步骤字幕（① … ⑬）。
+
+```bash
+npm start        # 另开一个终端
+npm run demo     # → docs/demo/oa-demo.webm（1280x800 · 约 30 秒 · 约 2 MB）
+```
+
+怎么做到**零依赖**（本机没装 ffmpeg 也照样出片）：
+
+| 环节 | 用的东西 |
+|---|---|
+| 抓帧 | CDP `Page.startScreencast`（系统已装的 Chrome，不下载 Chromium） |
+| 编码 | 浏览器自带的 `MediaRecorder` + `canvas.captureStream()`（VP8） |
+| 字幕 | 录制时往页面注入一个固定定位的 div —— 它同时兼任「心跳」 |
+
+⚠️ 两个踩出来的坑（脚本注释里也写了）：
+
+1. **screencast 只在画面变化时发帧** —— 观众「阅读停留」的时间会整段消失，30 秒被压成 19 秒、快到看不清。
+   解法是贴一个 2×2 的隐形 div 每 55ms 闪一下：用**肉眼看不见的变化**换回稳定的时间轴。
+2. **`startScreencast` 的第一帧常是合成器重绘中的白屏** —— 直接丢掉，视频开头才是登录页而不是一片白。
+
+> 录屏是「低成本产品验收」的延伸：截图让你发现**数字荒谬**（考勤缺卡 163 天就是这么发现的），
+> 录屏让你发现**节奏和衔接说不说得通**。
+> 另外，录之前建议先 `node seed.js --force` —— 库里残留的「UI 验收单」「`=cmd|'/c calc'!A1`」
+> 会一起被录进去，看着像测试现场而不是产品（脚本启动时会只读探测并提醒，不擅自改数据）。
+>
+> 想核对「视频里到底录到了什么」：`DEMO_STILLS=1 npm run demo`，会把采样帧落成 jpg 到
+> `docs/demo/frames/`（调试产物，已 gitignore）。
 
 ---
 
@@ -753,6 +786,7 @@ office-oa/
 │     └─ views/                 15 个视图（含 Meetings / Stats / Attendance）
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
+├─ docs/demo/                   演示录屏（由 scripts/oa-demo-record.mjs 生成，30 秒走完整链路）
 ├─ tests/                       setup + helpers + 13 个测试文件（271 用例，含 attendance / consistency）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
@@ -761,6 +795,7 @@ office-oa/
    ├─ check-vue-refvalue.mjs    静态扫描：ref 忘了 .value
    ├─ oa-ui-check.mjs           真机浏览器验收：审批全链路 + 越权 + 移动端 + 考勤打卡（73 断言；失败自动留证）
    ├─ oa-screenshots.mjs        真机截图
+   ├─ oa-demo-record.mjs        演示录屏：CDP 抓帧 + 浏览器自编码（零依赖，不需要 ffmpeg）
    └─ push-main.sh              推主分支（直连；网络不通时打印替代命令）
 ```
 

@@ -20,6 +20,10 @@ data/*.db-shm
 
 # 清库前的备份也不进仓库
 data/backups/
+data/app.db.bak-*
+
+# 录屏的抽帧产物（调试用，DEMO_STILLS=1 时才生成）
+docs/demo/frames/
 
 # 附件上传目录（用户上传的文件不进仓库）
 data/uploads/
