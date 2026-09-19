@@ -19,6 +19,7 @@ const TABLES_TO_CLEAR = [
   'room_slots', // M5：占用槽是 room_bookings 的子表，必须排在最前
   'room_bookings',
   'meeting_rooms',
+  'attendance', // M7：打卡记录，清空顺序无所谓（无外键子表）
   'approval_tasks',
   'attachments',
   'notifications',
@@ -69,6 +70,28 @@ const BOOKINGS = [
   { room: 1, user: 3, s: 18, e: 20, title: '内容运营双周会' }, // 王东 09:00-10:00 星野厅
   { room: 2, user: 6, s: 22, e: 24, title: '艺人执行对齐' }, // 周大 11:00-12:00 红叶室
   { room: 3, user: 5, s: 20, e: 21, title: '一对一沟通' }, // 孙小 10:00-10:30 白鹭室
+]
+
+// 演示考勤（M7）：本月最近若干工作日为两名员工打上班卡，让统计看板有数可看。
+// 放在模块级（和 ROOMS / BOOKINGS 一致，在 import 时算一次）—— TOMORROW 也是这么干的。
+const recentWeekdays = (n) => {
+  const out = []
+  const d = new Date()
+  d.setDate(d.getDate() - 1) // 从昨天往前数（今天可能还没打完）
+  while (out.length < n) {
+    const wd = d.getDay()
+    if (wd >= 1 && wd <= 5) {
+      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    }
+    d.setDate(d.getDate() - 1)
+  }
+  return out
+}
+const _attDays = recentWeekdays(6)
+const ATTENDANCE = [
+  ..._attDays.map((date) => ({ user: 4, date, in: '09:02:11', out: '18:30:00' })), // 赵西 按时
+  ..._attDays.map((date) => ({ user: 5, date, in: '09:48:30', out: '18:30:00' })), // 孙小 迟到
+  { user: 4, date: _attDays[2], in: '10:15:00', out: '18:30:00' }, // 赵西某天迟到（覆盖上面那条）
 ]
 
 // 部门（树形）
@@ -219,6 +242,14 @@ export function seed(db = getDb(), { force = false } = {}) {
       for (let s = b.s; s < b.e; s++) insSlot.run(b.room, TOMORROW, s, id)
     })
 
+    // 演示考勤（M7）：模块级的 ATTENDANCE 已算好，这里只插（同一人同一天用 OR REPLACE 稳定覆盖）
+    for (const a of ATTENDANCE) {
+      db.prepare(
+        `INSERT OR REPLACE INTO attendance (user_id, date, clock_in, clock_out, status)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(a.user, a.date, a.in, a.out, a.in > '09:30:00' ? 'late' : 'normal')
+    }
+
     // 几张示例单据，让前端有东西可看
     const snapshotOf = (type) => {
       const f = FLOWS.find((x) => x.type === type)
@@ -268,6 +299,7 @@ export function seed(db = getDb(), { force = false } = {}) {
     requests: 3,
     rooms: ROOMS.length,
     bookings: BOOKINGS.length,
+    attendance: ATTENDANCE.length,
     password: DEFAULT_PASSWORD,
   }
 }

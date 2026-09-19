@@ -216,4 +216,11 @@ export const api = {
   stats: {
     overview: (query) => request('/stats/overview', { query }),
   },
+
+  // --- M7 考勤 ---
+  attendance: {
+    clock: (type) => request('/attendance/clock', { method: 'POST', body: { type } }),
+    me: (query) => request('/attendance/me', { query }),
+    overview: (query) => request('/attendance/overview', { query }),
+  },
 }

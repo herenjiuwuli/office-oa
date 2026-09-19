@@ -259,3 +259,26 @@ CREATE INDEX IF NOT EXISTS idx_booking_room_date ON room_bookings(room_id, date,
 CREATE INDEX IF NOT EXISTS idx_booking_user      ON room_bookings(user_id, date);
 
 CREATE INDEX IF NOT EXISTS idx_blacklist_user ON token_blacklist(user_id);
+
+-- 考勤打卡（M7）
+-- 一天一条：UNIQUE(user_id, date) 让「重复的上下班打卡」变成「更新同一行」而不是「插出第二行」。
+-- 这跟会议室用 WITHOUT ROWID 唯一约束挡冲突是同一个思路：把「不该重复的东西」交给数据库主键，
+-- 而不是靠应用层「先查有没有再插」。
+-- status 只看打卡这件事本身：late = 上班晚于 09:30；normal = 按时；pending = 只打了上班还没打下班；
+-- 缺卡（absent）不在这里落行 —— 当天没任何记录就是缺卡，overview 用「工作日 - 有记录的天数」算出来，
+-- 否则「今天还没结束，系统就提前给你贴个 absent」是错的。
+CREATE TABLE IF NOT EXISTS attendance (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  date       TEXT    NOT NULL,
+  clock_in   TEXT,                       -- HH:MM:SS，没打上班卡为 NULL
+  clock_out  TEXT,                       -- HH:MM:SS，没打下班卡为 NULL
+  status     TEXT    NOT NULL DEFAULT 'pending',
+  note       TEXT,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_attendance_date      ON attendance(date);

@@ -317,6 +317,13 @@ try {
   await sleep(400)
   await cdp.shot('13b-统计看板-M6.png')
 
+  // 13c) 考勤打卡（M7）：admin 有全部三个范围 tab；打卡区 + 数字卡 + 逐人明细表都渲染出来
+  await cdp.nav(`${BASE}/attendance`, `!!document.querySelector('[data-t="att-scope-all"]')`)
+  await cdp.eval(HELPERS)
+  await waitFor(cdp, `!!document.querySelector('[data-t="att-summary-recorded"]')`, '考勤数字卡渲染', 8000)
+  await sleep(400)
+  await cdp.shot('13c-考勤打卡-M7.png')
+
   // 14) 移动端（真改视口）
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: 390, height: 844, deviceScaleFactor: 2, mobile: true,

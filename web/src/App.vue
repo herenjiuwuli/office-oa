@@ -121,6 +121,9 @@ const isLogin = computed(() => route.path === '/login')
           <router-link to="/stats" class="nav-item" :class="{ active: isActive('/stats') }">
             统计看板
           </router-link>
+          <router-link to="/attendance" class="nav-item" :class="{ active: isActive('/attendance') }">
+            考勤打卡
+          </router-link>
           <router-link
             v-if="can('audit:read')"
             to="/audit-logs"

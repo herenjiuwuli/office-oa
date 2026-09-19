@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
+import { getDb } from '../server/db.js'
 
 const BASE = (process.argv[2] || 'http://127.0.0.1:3200').replace(/\/$/, '')
 
@@ -659,6 +660,76 @@ async function scenario(cdp) {
     Number.isFinite(mineNum) && mineNum <= allNum,
     `all=${allNum} mine=${mineNum}`,
   )
+
+  console.log('\n--- G6. 考勤打卡（M7）：打卡幂等 + 范围收敛 ---')
+  // 跑前清掉两名测试账号「今天」的打卡，让本段每次都从干净状态开始
+  // （打卡写的是真实日期，不清场第二轮按钮就是禁用的，断言会假失败）
+  {
+    const today = new Date().toISOString().slice(0, 10)
+    const db = getDb()
+    db.prepare(`DELETE FROM attendance WHERE user_id IN (3, 4) AND date = ?`).run(today)
+  }
+  await logout(cdp)
+  await loginAs(cdp, 'ops02') // 普通员工（id 4）
+  await cdp.nav(`${BASE}/attendance`)
+  await cdp.waitFor(`!!document.querySelector('[data-t="att-clock-in"]')`, '考勤页渲染')
+
+  // 员工只有「我的」一个范围 tab（dept/all 不渲染；真正的防线在后端 403，已由单测覆盖）
+  const attTabs = await cdp.eval(
+    `Array.from(document.querySelectorAll('.tabs .btn')).filter(b => b.getAttribute('data-t')?.startsWith('att-scope')).length`,
+  )
+  check('★ 员工只有「我的」一个范围 tab', attTabs === 1, `${attTabs} 个`)
+
+  // 上班打卡 → 今天状态出现「上班 HH:MM」（注意：waitFor 不能只查 includes('上班')，
+  // 因为按钮文字本身就叫「上班打卡」，会永远匹配；必须等到真的出现「上班 时间」）
+  await cdp.eval(`window.__t.click('上班打卡')`)
+
+  const dbToday = () => {
+    try {
+      const d = new Date().toISOString().slice(0, 10)
+      const row = getDb().prepare(`SELECT * FROM attendance WHERE user_id=4 AND date=?`).get(d)
+      return row ? `id4 ${row.date} in=${row.clock_in} out=${row.clock_out}` : `id4 ${d} 无记录`
+    } catch (x) {
+      return 'db-err:' + x.message
+    }
+  }
+
+  let inOk = false
+  try {
+    await cdp.waitFor(
+      `!!document.querySelector('[data-t="att-today-status"]').textContent.match(/上班\\s+\\d{2}:\\d{2}/)`,
+      '今天状态出现上班时间',
+      8000,
+    )
+    inOk = true
+  } catch (e) {
+    const errTxt = await cdp.eval(`document.querySelector('[data-t="att-error"]')?.textContent || ''`)
+    const raw = await cdp.eval(`document.querySelector('[data-t="att-today-status"]')?.textContent || ''`)
+    console.log('  ↳ 打卡未刷新的现场：', { 页面提示: errTxt, 状态栏: raw.trim().slice(0, 40), 数据库: dbToday() })
+  }
+  const inShown = await cdp.eval(`document.querySelector('[data-t="att-today-status"]').textContent`)
+  check('★ 上班打卡后页面显示打卡时间（不自己编造）', inOk && /上班\s+\d{2}:\d{2}/.test(inShown), inShown.trim().slice(0, 40))
+
+  // 下班打卡 → 出现「下班 HH:MM」
+  await cdp.eval(`window.__t.click('下班打卡')`)
+  let outOk = false
+  try {
+    await cdp.waitFor(
+      `!!document.querySelector('[data-t="att-today-status"]').textContent.match(/下班\\s+\\d{2}:\\d{2}/)`,
+      '今天状态出现下班时间',
+      8000,
+    )
+    outOk = true
+  } catch (e) {
+    const errTxt = await cdp.eval(`document.querySelector('[data-t="att-error"]')?.textContent || ''`)
+    console.log('  ↳ 下班打卡未刷新的现场：', { 页面提示: errTxt, 数据库: dbToday() })
+  }
+  const outShown = await cdp.eval(`document.querySelector('[data-t="att-today-status"]').textContent`)
+  check('下班打卡后页面显示下班时间', outOk && /下班\s+\d{2}:\d{2}/.test(outShown), outShown.trim().slice(0, 40))
+
+  // 统计卡片有数（今天这条打卡会让 recordedDays >= 1；种子已给 6 天，打完卡应 >= 7）
+  const recDays = await cdp.eval(`parseInt(document.querySelector('[data-t="att-summary-recorded"]').textContent)`)
+  check('★ 统计看板的有打卡天数 >= 7（今天这条真的算进去了）', recDays >= 7, `${recDays}`)
 
   console.log('\n--- H. 移动端布局（真改视口，不靠截图）---')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
