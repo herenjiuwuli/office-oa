@@ -27,6 +27,7 @@ docs/demo/frames/
 
 # 附件上传目录（用户上传的文件不进仓库）
 data/uploads/
+data/uploads-*/
 data/e2e-uploads/
 
 # 本地环境变量

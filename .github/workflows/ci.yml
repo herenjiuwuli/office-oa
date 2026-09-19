@@ -65,16 +65,10 @@ jobs:
         run: npm run test:e2e
 
       - name: ④ 真机断言（自写零依赖 CDP 脚本，81 条，覆盖会议室/统计/考勤/批量审批）
-        run: |
-          # 这份脚本会真实写库（走真链路），所以先把库重置到种子态
-          node seed.js --force
-          # 它要求服务已就绪（Playwright 的自带 webServer 只管 ③ 那一步，这里要自己起）
-          node index.js &
-          for i in $(seq 1 40); do
-            if curl -sf http://127.0.0.1:3200/health > /dev/null; then echo "服务就绪"; break; fi
-            sleep 1
-          done
-          node scripts/oa-ui-check.mjs
+        # 与本地跑的是**同一条命令**：它自己备隔离环境（data/ui-check.db + 3400 端口）、
+        # 自己起服务、跑完自己收。以前这里手写「seed --force + node index.js & + curl 轮询」，
+        # 和本地那份是两套逻辑 —— 现在只有一套，不会再各自漂移。
+        run: npm run check:ui:auto
 
       - name: 失败时上传 Playwright 报告
         if: failure()

@@ -58,10 +58,14 @@ npm test                            # ② 跑全部 295 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
 npm run check:docs                  # ①b 文档引用扫描：README/docs/CI 里引用的文件必须真的存在
 npm run test:e2e                    # ③ Playwright 跑审批链路（13 条，自动起 3300 端口的服务）
-node scripts/oa-ui-check.mjs        # ④ 真机 CDP 断言 81 条（服务需先起来；覆盖会议室/统计/考勤/批量审批）
+npm run check:ui:auto               # ④ 真机 CDP 断言 81 条（自己起隔离服务：独立库 + 3400 端口，跑完自动收）
 npm run demo                        # ⑤ 演示录屏 → docs/demo/oa-demo.webm（零依赖：本机不需要 ffmpeg）
-npm run verify                      # 本地一条命令复现 CI 的「静态扫描 + 构建 + 接口 + E2E」（④ 需先起服务，单独跑）
+npm run verify                      # 本地一条命令复现 CI 全部五层（约 4 分钟）
 ```
+
+> `npm run check:ui` 是 ④ 的裸脚本（要求 `:3200` 已有服务）；
+> `npm run check:ui:auto` 是自包含版：种子数据写进 `data/ui-check.db`、服务起在 3400、
+> 跑完自己收尾 —— **既不会动你的开发库，也不会杀你正在跑的服务**。
 
 > `.env` 是**可选**的：只影响「AI 审批摘要」这一个功能。不配 key 时按钮会置灰并说明原因，其余功能完全不受影响。
 > 服务启动时会用 Node 内置的 `process.loadEnvFile()` 读它（**不引 dotenv 依赖**）。
@@ -408,7 +412,7 @@ npm run verify     # 一条命令跑完 ①②③ + 构建（本地复现 CI 的
 | ①b 文档引用扫描 | `npm run check:docs` | 1 个零依赖脚本 | README / docs / CI 里引用的**仓库内文件是否真的存在** + 反向的「磁盘上有、文档没提」。实测抓到过指向 `docs/screenshots/10-移动端390.png` 的失效引用（真实文件是 `15-…`），**渲染出来毫无异样，挂了很久没人发现** <!-- refcheck-ignore --> |
 | ② 接口测试 | `npm test` | **295 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、CSV 转义/公式注入/响应头、会议室时段冲突、统计与考勤的 scope 收敛、缺卡算数、**跨模块数字对账**、**批量审批的部分成功语义**（**看不到界面**） |
 | ③ UI 测试（Playwright） | `npm run test:e2e` | **13 条** | 审批全链路、附件增删、AI 卡片置灰、守卫重定向、移动端无横向溢出（自带自动等待/重试/报告） |
-| ④ 真机断言（自写零依赖 CDP） | `node scripts/oa-ui-check.mjs` | **81 条** | 同一条链路的**交叉验证**，并额外覆盖 **M5 会议室 / M6 统计 / M7 考勤 / M8 批量审批** 的真机行为（G1–G7 七组）+ 页面数字与接口数字的**跨层对账** |
+| ④ 真机断言（自写零依赖 CDP） | `npm run check:ui:auto`（自起隔离服务）/ `node scripts/oa-ui-check.mjs`（需先起服务） | **81 条** | 同一条链路的**交叉验证**，并额外覆盖 **M5 会议室 / M6 统计 / M7 考勤 / M8 批量审批** 的真机行为（G1–G7 七组）+ 页面数字与接口数字的**跨层对账** |
 
 > ⭐ 这四层**不是重复，是递进**：第 ② 层 295 条全绿的时候，③ 层照样抓出两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）；而**截图导览**这一层又抓出两个
@@ -670,6 +674,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
 3. **接口测试** `npm test`（295 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
+5. **真机断言** `node seed.js --force` + 起服务 + `node scripts/oa-ui-check.mjs`（81 条，零依赖 CDP，覆盖 M5/M6/M7/M8 的 UI 行为）
 
 失败时自动上传 Playwright HTML 报告（artifact，保留 7 天）。
 
@@ -839,6 +844,7 @@ office-oa/
    ├─ check-vue-refvalue.mjs    静态扫描：ref 忘了 .value
    ├─ check-doc-refs.mjs        静态扫描：文档/CI 里引用的仓库内文件是否真的存在（含跨仓白名单）
    ├─ oa-ui-check.mjs           真机浏览器验收：审批全链路 + 越权 + 移动端 + 考勤打卡 + 批量审批（81 断言；失败自动留证）
+   ├─ run-ui-check.mjs          ④ 的自包含包装：备隔离环境 + 起服务 + 跑完收尾（让 verify 能一条命令覆盖五层）
    ├─ oa-screenshots.mjs        真机截图
    ├─ oa-demo-record.mjs        演示录屏：CDP 抓帧 + 浏览器自编码（零依赖，不需要 ffmpeg）
    └─ push-main.sh              推主分支（直连；网络不通时打印替代命令）

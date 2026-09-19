@@ -20,11 +20,12 @@
     "check:frontend:refvalue": "node scripts/check-vue-refvalue.mjs web/src/views",
     "check:docs": "node scripts/check-doc-refs.mjs",
     "check:ui": "node scripts/oa-ui-check.mjs",
+    "check:ui:auto": "node scripts/run-ui-check.mjs",
     "shots": "node scripts/oa-screenshots.mjs",
     "demo": "node scripts/oa-demo-record.mjs",
     "test:e2e": "node e2e/seed-e2e.mjs && playwright test",
     "test:e2e:report": "playwright show-report",
-    "verify": "npm run check:frontend && npm run check:docs && npm run build && npm test && npm run test:e2e"
+    "verify": "npm run check:frontend && npm run check:docs && npm run build && npm test && npm run test:e2e && npm run check:ui:auto"
   },
   "dependencies": {
     "@fastify/multipart": "^9.4.0",
