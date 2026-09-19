@@ -707,7 +707,7 @@ office-oa/
 │     └─ views/                 15 个视图（含 Meetings / Stats / Attendance）
 ├─ docs/                        面试材料（面试弹药 + 关源码复现练习）
 ├─ docs/screenshots/            真机截图（由 scripts/oa-screenshots.mjs 生成）
-├─ tests/                       setup + helpers + 13 个测试文件（259 用例，含 attendance）
+├─ tests/                       setup + helpers + 12 个测试文件（259 用例，含 attendance）
 ├─ e2e/                         Playwright UI 用例（13 条）+ 专用库重置脚本
 └─ scripts/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）
