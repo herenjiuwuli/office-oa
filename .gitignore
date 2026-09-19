@@ -3,6 +3,10 @@ dist/
 test-results/
 coverage/
 
+# 真机断言的失败现场（截图 + 页面文本 + report.txt）—— 是产物，不进仓库。
+# ⚠️ 刻意不放 test-results/：那是 Playwright 的目录，它每次启动都会清空它（见脚本内注释）
+evidence/
+
 # Playwright 产物
 playwright-report/
 blob-report/

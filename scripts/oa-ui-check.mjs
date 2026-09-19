@@ -61,8 +61,27 @@ class CDP {
     this.ws = ws
     this.id = 0
     this.pending = new Map()
+    // 顺手把**页面自己报的错**收下来 —— 失败留证时这是最值钱的一块：
+    // 「白屏 / ReferenceError」这类问题在断言层面只表现为「找不到元素」，
+    // 真正的原因只出现在这里。
+    this.exceptions = []
+    this.consoleErrors = []
     ws.addEventListener('message', (ev) => {
       const m = JSON.parse(ev.data)
+      if (m.method === 'Runtime.exceptionThrown') {
+        const d = m.params?.exceptionDetails
+        const txt = d?.exception?.description || d?.text || ''
+        if (txt) this.exceptions.push(String(txt).split('\n')[0].slice(0, 300))
+        return
+      }
+      if (m.method === 'Runtime.consoleAPICalled' && m.params?.type === 'error') {
+        const txt = (m.params.args || [])
+          .map((a) => a.value ?? a.description ?? '')
+          .join(' ')
+          .slice(0, 300)
+        if (txt) this.consoleErrors.push(txt)
+        return
+      }
       if (m.id && this.pending.has(m.id)) {
         const { resolve, reject } = this.pending.get(m.id)
         this.pending.delete(m.id)
@@ -161,11 +180,148 @@ window.__t = {
 'ok';
 `
 
+// ---------------------------------------------------------------------------
+// 失败留证
+//
+// 为什么必须有：这一层是 M5/M6/M7 UI 行为的**唯一**保护，而它以前失败时
+// 只往 stdout 打几行字。CI 里没人盯着 stdout —— 于是「最近三个模块的 UI 回归
+// 坏了」这件事，你是**拿不到现场**的（不知道页面停在哪个 URL、长什么样、
+// 控制台报了什么）。断言只告诉你「没找到元素」，不告诉你为什么。
+//
+// ⚠️ 铁律：留证代码**自己永不抛错**。抓现场失败绝不能把原始失败顶掉、
+//    也不能让「本来跑得通的脚本」因为留证而红。所以这里每一层都 try/catch 兜住。
+// ---------------------------------------------------------------------------
+// ⚠️ 刻意**不放在 `test-results/` 里**：那是 Playwright 的产物目录，它每次启动都会清空它。
+//    实测（2026-09-19）：把证据放进去之后，`npm run verify` 时 Playwright 清理该目录撞上
+//    沙箱的批量删除保护（588 个文件 > 阈值 50）→ **一条 E2E 都没跑就死了**。
+//    「证据被别人的清理顺手删掉」和「证据害得别人的清理失败」，两个都不想要 —— 所以另起目录。
+const EVIDENCE_DIR = path.join(process.cwd(), 'evidence')
+const EVIDENCE_MAX = 6 // 刷屏没意义：一次运行最多留 6 张，其余只进文字报告
+
+let currentCdp = null
+let evidenceCount = 0
+let lastEvidenceUrl = null
+const evidenceTasks = []
+const evidenceLog = [] // 收尾时写进 report.txt
+
+const safeName = (s) => String(s).replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 40)
+
+/**
+ * 抓一份失败现场：截图 + 文字（URL / 页面文本 / 页面异常 / 当前失败清单）。
+ * @param {boolean} force 异常路径用 true —— 此时即使同一 URL 已留过证也要再抓一张
+ * @returns {Promise<string|null>} 证据文件基名
+ */
+async function captureEvidence(cdp, label, force = false) {
+  try {
+    if (!cdp || (!force && evidenceCount >= EVIDENCE_MAX)) return null
+
+    let url = ''
+    try {
+      url = await cdp.eval('location.href')
+    } catch {
+      url = '(取不到：CDP 可能已断)'
+    }
+    // 同一个页面上连续多条断言失败 → 只留第一张，避免 6 张全是同一个画面
+    if (!force && url && url === lastEvidenceUrl) return null
+    lastEvidenceUrl = url
+    evidenceCount++
+
+    fs.mkdirSync(EVIDENCE_DIR, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const base = `${stamp}-${safeName(label)}`
+    const files = []
+
+    // ① 截图
+    try {
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+      const png = path.join(EVIDENCE_DIR, base + '.png')
+      fs.writeFileSync(png, Buffer.from(shot.data, 'base64'))
+      files.push(path.basename(png))
+    } catch (e) {
+      files.push(`(截图失败: ${e.message})`)
+    }
+
+    // ② 页面可见文本
+    let pageText = ''
+    try {
+      pageText = await cdp.eval('document.body ? document.body.innerText : ""')
+    } catch {
+      pageText = '(取不到页面文本)'
+    }
+
+    // ③ 文字现场
+    const passed = checks.filter((c) => c.pass).length
+    const lines = [
+      '# office-oa 真机断言 · 失败现场',
+      '',
+      `时间：${new Date().toISOString()}`,
+      `触发：${label}`,
+      `页面：${url}`,
+      `进度：通过 ${passed} / 已执行 ${checks.length}`,
+      '',
+      '## 失败清单（截至目前）',
+      ...(checks.filter((c) => !c.pass).length
+        ? checks.filter((c) => !c.pass).map((c) => `- ${c.name}${c.detail ? '  → ' + c.detail : ''}`)
+        : ['（无）']),
+      '',
+      '## 页面异常 Runtime.exceptionThrown',
+      ...(cdp.exceptions.length ? cdp.exceptions : ['（无）']),
+      '',
+      '## console.error',
+      ...(cdp.consoleErrors.length ? cdp.consoleErrors : ['（无）']),
+      '',
+      '## 页面可见文本（前 4000 字）',
+      '```',
+      String(pageText).slice(0, 4000),
+      '```',
+      '',
+    ]
+    const txt = path.join(EVIDENCE_DIR, base + '.txt')
+    fs.writeFileSync(txt, lines.join('\n'), 'utf8')
+    files.push(path.basename(txt))
+
+    evidenceLog.push({ label, url, files })
+    console.log(`  ⤷ 已留证：evidence/${files.join(' , ')}`)
+    return base
+  } catch {
+    return null // 留证失败就算了，绝不往上抛
+  }
+}
+
 const checks = []
 function check(name, pass, detail) {
   checks.push({ name, pass, detail })
   console.log((pass ? '  OK   ' : '  FAIL ') + name + (detail ? '  → ' + detail : ''))
+  // 失败即留证（不 await：check 是同步的。任务记进队列，收尾统一 flush）
+  if (!pass) evidenceTasks.push(captureEvidence(currentCdp, name))
   return pass
+}
+
+/** 写总报告：不管成功失败都写，CI 里一并上传（成功时的报告也有价值：它是验收记录） */
+function writeReport(thrown) {
+  try {
+    fs.mkdirSync(EVIDENCE_DIR, { recursive: true })
+    const passed = checks.filter((c) => c.pass).length
+    const failed = checks.filter((c) => !c.pass)
+    const lines = [
+      '# office-oa 真机断言报告',
+      '',
+      `时间：${new Date().toISOString()}`,
+      `目标：${BASE}`,
+      `结果：通过 ${passed} / ${checks.length}${thrown ? '（脚本异常中断）' : ''}`,
+      thrown ? `\n异常：${thrown.message}` : '',
+      '',
+      '## 全部断言',
+      ...checks.map((c) => `${c.pass ? '[OK]  ' : '[FAIL]'} ${c.name}${c.detail ? '  → ' + c.detail : ''}`),
+      '',
+      '## 留证文件',
+      ...(evidenceLog.length ? evidenceLog.map((e) => `- ${e.label} @ ${e.url}\n  ${e.files.join('\n  ')}`) : ['（本次无失败，未留证）']),
+      '',
+    ]
+    fs.writeFileSync(path.join(EVIDENCE_DIR, 'report.txt'), lines.filter((l) => l !== '').join('\n'), 'utf8')
+  } catch {
+    /* 报告写不了也不影响退出码 */
+  }
 }
 
 async function withBrowser(fn) {
@@ -196,6 +352,8 @@ async function withBrowser(fn) {
   )
 
   let ws = null
+  let cdp = null
+  let thrown = null
   try {
     const ver = await waitJson(`http://127.0.0.1:${PORT}/json/version`)
     console.log('Chrome:', ver.Browser)
@@ -205,11 +363,22 @@ async function withBrowser(fn) {
       ws.addEventListener('open', res)
       ws.addEventListener('error', rej)
     })
-    const cdp = new CDP(ws)
+    cdp = new CDP(ws)
     await cdp.send('Page.enable')
     await cdp.send('Runtime.enable')
+    currentCdp = cdp
     return await fn(cdp)
+  } catch (e) {
+    thrown = e
+    // ⭐ 脚本被中断时的现场最值钱：此刻页面还活着，之后的分组一条都不会再跑。
+    //    以前这里只有一行 `脚本异常: xxx`，等于「知道挂了、不知道为什么挂」。
+    if (cdp) await captureEvidence(cdp, 'exception_' + safeName(e.message || 'unknown'), true)
+    throw e
   } finally {
+    // ⚠️ 顺序要紧：先把排队的证据 flush 完（还要用 ws 截图），再关连接
+    await Promise.allSettled(evidenceTasks)
+    writeReport(thrown)
+    if (evidenceCount) console.log(`\n失败现场已写入 evidence/（${evidenceCount} 份截图 + report.txt）`)
     try { if (ws) ws.close() } catch {}
     try { child.kill() } catch {}
     await sleep(500)
@@ -666,6 +835,19 @@ async function scenario(cdp) {
     `all=${allNum} mine=${mineNum}`,
   )
 
+  // ★ 跨层对账：页面上那个数字，必须等于**接口自己算出来的**同一个数。
+  //   否则前端可能在自己算一份 —— 而「两处各算一份」正是 M4 导出（越权）、
+  //   M6 统计（口径漂移）反复踩的那类问题。这里从页面里直接带 token 打接口来比。
+  const apiMine = await cdp.eval(
+    `fetch('/api/stats/overview?scope=mine', { headers: { authorization: 'Bearer ' + localStorage.getItem('oa.token') } })
+       .then(r => r.json()).then(d => d.requests.total)`,
+  )
+  check(
+    '★ 页面数字 == 接口 scope=mine 的 total（不是前端自己算的）',
+    mineNum === apiMine,
+    `UI=${mineNum} API=${apiMine}`,
+  )
+
   console.log('\n--- G6. 考勤打卡（M7）：打卡幂等 + 范围收敛 ---')
   // 跑前清掉两名测试账号「今天」的打卡，让本段每次都从干净状态开始
   // （打卡写的是真实日期，不清场第二轮按钮就是禁用的，断言会假失败）
@@ -777,5 +959,10 @@ withBrowser(scenario)
   })
   .catch((e) => {
     console.error('\n脚本异常:', e.message)
+    if (e.stack) console.error(e.stack.split('\n').slice(0, 4).join('\n'))
+    // 异常时也要说清「死在半路的哪儿」—— 只报一句异常等于没法排查
+    const pass = checks.filter((c) => c.pass).length
+    console.error(`（异常前已执行断言：通过 ${pass} / 共 ${checks.length}）`)
+    console.error('现场（截图 + 页面文本 + 页面异常）见 evidence/')
     process.exitCode = 2
   })

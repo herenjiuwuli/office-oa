@@ -2,9 +2,9 @@ name: CI
 
 # M2：把三层测试接进 CI 做回归
 #   ① 静态扫描（前端未声明标识符等 —— 拦「build 过但运行时 ReferenceError」）
-#   ② 接口测试（vitest，259 条：鉴权 / 权限 / 审批流 / 状态机 / 附件 / AI / 导出 / 会议室 / 统计 / 考勤）
+#   ② 接口测试（vitest，271 条：鉴权 / 权限 / 审批流 / 状态机 / 附件 / AI / 导出 / 会议室 / 统计 / 考勤 / 跨模块对账）
 #   ③ UI 测试（Playwright，13 条：跑一整条 提交 → 两级审批 → 归档 + 驳回重提）
-#   ④ 真机断言（自写零依赖 CDP 脚本，72 条）
+#   ④ 真机断言（自写零依赖 CDP 脚本，73 条）
 #
 # ⚠️ 为什么 ③ 和 ④ 都要留着（不是重复）：
 #   ③ 是标准框架（自动等待 / 重试 / trace / 报告），④ 是零依赖直连 CDP。
@@ -12,6 +12,10 @@ name: CI
 #   ③ 目前只覆盖 M1/M2 那批功能（审批链路 / 附件 / AI / 守卫），
 #   ④ 还额外覆盖了 **M5 会议室 / M6 统计 / M7 考勤** 的真机行为。
 #   之前 ④ 没进 CI，等于「最近三个模块的 UI 层零回归保护」—— 改坏了 CI 照样绿。这一轮补上。
+#
+#   ⭐ ④ 以前失败时只往 stdout 打几行字，而 CI 里没人盯 stdout —— 于是「M5/M6/M7 的
+#     UI 回归坏了」这件事拿不到现场。现在它失败会自动往 test-results/oa-ui-check/ 写
+#     截图 + 页面可见文本 + 页面异常 + report.txt，由下面 `if: failure()` 的步骤上传。
 #
 # ⭐ 不下载浏览器：Playwright 配了 channel: 'chrome'，用 GitHub runner
 #    （ubuntu-latest 镜像自带 Google Chrome stable）已装的 Chrome，省掉几百 MB 下载。
@@ -53,7 +57,7 @@ jobs:
       - name: ③ UI 测试（Playwright，用系统 Chrome）
         run: npm run test:e2e
 
-      - name: ④ 真机断言（自写零依赖 CDP 脚本，72 条，覆盖会议室/统计/考勤）
+      - name: ④ 真机断言（自写零依赖 CDP 脚本，73 条，覆盖会议室/统计/考勤）
         run: |
           # 这份脚本会真实写库（走真链路），所以先把库重置到种子态
           node seed.js --force
@@ -72,3 +76,17 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+      - name: 失败时上传真机断言现场（截图 + 页面文本 + 页面异常 + 报告）
+        # ④ 是 M5/M6/M7 的 UI 行为在 CI 里的**唯一**保护。它以前失败时只往
+        # stdout 打几行字，而 CI 里没人盯 stdout —— 断言说「没找到元素」，
+        # 但页面停在哪个 URL、长什么样、控制台报了什么，全都没留下。
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa-ui-check-evidence
+          # ⚠️ 是 evidence/ 不是 test-results/oa-ui-check/ —— 后者会被 Playwright
+          #    每次启动时的清理顺手删掉（实测还会因文件数超阈值让清理本身失败）
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: ignore
