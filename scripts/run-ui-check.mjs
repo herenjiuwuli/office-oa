@@ -49,6 +49,51 @@ function runInherit(args, env) {
   })
 }
 
+const CHECK_SCRIPT = 'scripts/oa-ui-check.mjs'
+
+/**
+ * 源码里写了多少处 `check(` —— 只是「写在哪」，不等于会跑几条（见下）。
+ * ⚠️ **必须排除函数定义行**：`function check(name, pass, detail) {` 里也有 "check("。
+ *    实测就这么多算了一处（82 vs 81），把下面的差异提示**误报**成「有 1 处没执行」——
+ *    ⭐ 新加的检查自己也会给假信号，是实跑把它抓出来的。
+ */
+function countChecks(file) {
+  const re = /(^|[^a-zA-Z])check\(/
+  const defRe = /^\s*(export\s+)?(async\s+)?function\s+check\b/
+  return fs
+    .readFileSync(path.join(ROOT, file), 'utf8')
+    .split(/\r?\n/)
+    .filter((l) => re.test(l) && !defRe.test(l)).length
+}
+
+/**
+ * 跑断言脚本：**透传输出**（CI 里没人看被吞掉的日志）+ **抓它报的实际条数**。
+ * 为什么要在意「实际」：静态 `check(` 数的是「写在哪」，而条件/循环分支里的
+ * 断言**不一定执行** —— 本仓实测就是**源码 82 处、实跑 81 条**。
+ * 所以两个都记，不一致时**主动提示**：差异本身就是「有断言没跑到」的信号。
+ */
+function runCapture(args, env) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env })
+    let buf = ''
+    const onData = (d) => {
+      const s = d.toString()
+      buf += s
+      process.stdout.write(s)
+    }
+    p.stdout.on('data', onData)
+    p.stderr.on('data', onData)
+    p.on('exit', (c) => resolve({ code: c ?? 1, out: buf }))
+    p.on('error', reject)
+  })
+}
+
+/** 从输出里取最后报的「通过 N / N」的分母（= 实际执行的断言数） */
+function actualFrom(out) {
+  const m = [...out.matchAll(/通过\s+(\d+)\s*\/\s*(\d+)/g)]
+  return m.length ? Number(m[m.length - 1][2]) : null
+}
+
 async function main() {
   fs.mkdirSync(path.dirname(DB), { recursive: true })
   fs.mkdirSync(UPLOAD, { recursive: true })
@@ -83,18 +128,37 @@ async function main() {
     }
   }
 
+  const declared = countChecks(CHECK_SCRIPT)
+  console.log(`[ui-check] 计入 ${path.basename(CHECK_SCRIPT)}：源码里 check( 共 ${declared} 处（实际条数以运行输出为准）`)
+
   let code = 1
+  let actual = null
   try {
     // 透传当前环境（含沙箱/CI 变量），但 base 用参数传，避免子脚本读错端口
-    code = await runInherit(['scripts/oa-ui-check.mjs', BASE], process.env)
+    const r = await runCapture([CHECK_SCRIPT, BASE], process.env)
+    code = r.code
+    actual = actualFrom(r.out)
   } catch (e) {
     cleanup()
     throw e
   }
   cleanup()
 
-  console.log(code === 0 ? '[ui-check] ④ 真机断言通过' : `[ui-check] ④ 真机断言未通过（退出码 ${code}）`)
-  process.exit(code)
+  if (code !== 0) {
+    console.log(`[ui-check] ④ 真机断言未通过（退出码 ${code}）`)
+    process.exit(code)
+  }
+  console.log(
+    `[ui-check] ✅ ④ 真机断言通过：实际执行 ${actual ?? '？'} 条（源码里 check( 共 ${declared} 处）`,
+  )
+  if (actual == null) {
+    console.log('[ui-check] ⚠️ 没抓到子脚本报的「通过 N / N」→ 条数以它自己的输出为准')
+  } else if (actual !== declared) {
+    console.log(
+      `[ui-check] ⚠️ 实际 ${actual} 条 ≠ 源码 ${declared} 处 → 有 ${declared - actual} 处本次没执行（多半在条件/循环分支里）`,
+    )
+  }
+  process.exit(0)
 }
 
 main().catch((e) => {
