@@ -328,9 +328,12 @@ async function withBrowser(fn) {
   const CHROME = findChrome()
   const PORT = 9334
   const userDataDir = path.join(os.tmpdir(), 'oa-cdp-' + Date.now())
-  // CI（GitHub runner / 容器）里 Chrome 需要 --no-sandbox，否则起不来；
-  // --disable-dev-shm-usage 是因为容器 /dev/shm 太小会让渲染进程崩。
-  // 本机不加这两个（保持沙箱开启），只在 CI 生效。
+  // ⚠️ 这两条是**保险，不是必需** —— 别把注释写成「不加就起不来」：
+  //    实测平台的同类脚本（同样是裸起系统 Chrome、且**没带**这两个参数）在
+  //    ubuntu-latest 上照样跑通（api-test-platform 的 run #17，第 ⑤ 层 success），
+  //    所以「不加必起不来」并不成立。
+  //    留着它的真正理由：换 runner / 进容器时 sandbox 可能不可用，
+  //    而容器 /dev/shm 太小会让渲染进程崩。本机不加（保持沙箱开启），只在 CI 生效。
   const ciFlags = process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage'] : []
   const child = spawn(
     CHROME,
