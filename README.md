@@ -56,10 +56,11 @@ npm start                           # 打开 http://127.0.0.1:3200
 
 npm test                            # ② 跑全部 295 条接口用例
 npm run check:frontend              # ① 前端静态扫描（commit 前必跑）
+npm run check:docs                  # ①b 文档引用扫描：README/docs/CI 里引用的文件必须真的存在
 npm run test:e2e                    # ③ Playwright 跑审批链路（13 条，自动起 3300 端口的服务）
 node scripts/oa-ui-check.mjs        # ④ 真机 CDP 断言 81 条（服务需先起来；覆盖会议室/统计/考勤/批量审批）
 npm run demo                        # ⑤ 演示录屏 → docs/demo/oa-demo.webm（零依赖：本机不需要 ffmpeg）
-npm run verify                      # 本地一条命令复现 CI 的 ①②③（④ 需要先起服务，所以单独跑）
+npm run verify                      # 本地一条命令复现 CI 的「静态扫描 + 构建 + 接口 + E2E」（④ 需先起服务，单独跑）
 ```
 
 > `.env` 是**可选**的：只影响「AI 审批摘要」这一个功能。不配 key 时按钮会置灰并说明原因，其余功能完全不受影响。
@@ -312,7 +313,7 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 通知不是「指向单据的视图」，而是**事件发生时写下的快照**：
 
 - **`round` 是抄下来的，不是现查的**：驳回通知写「第 1 轮被驳回」，申请人重提到第 2 轮后，这条老通知**不会自己改口**。否则「第 1 轮被驳回」会变成「第 2 轮被驳回」，历史被悄悄篡改（和 `flow_snapshot`、平台环境快照是同一教训的第三次出现）。
-- **写通知必须在状态变更的同事务里**：审批 COMMIT 了、通知才补写失败 → 用户永远不知道自己被驳回，且不报错，只会「少收到东西」。所以 `notify.js` 只负责 `INSERT`，事务边界由 `flow/engine.js` 掌握。
+- **写通知必须在状态变更的同事务里**：审批 COMMIT 了、通知才补写失败 → 用户永远不知道自己被驳回，且不报错，只会「少收到东西」。所以 `notify.js` 只负责 `INSERT`，事务边界由 `server/flow/engine.js` 掌握。
 - **收件人隔离靠 SQL 层 `user_id = 当前用户`，不靠权限码** —— 通知是纯私有资源，没有「可见但无权限」的中间态；别人的 / 不存在的统一 404，不泄漏存在性（和引擎「授权先于状态」同一取舍）。
 - **不给自己发通知**：审批人恰好是申请人这类配置错误，不该变成对自己的骚扰。
 
@@ -404,6 +405,7 @@ npm run verify     # 一条命令跑完 ①②③ + 构建（本地复现 CI 的
 | 层 | 命令 | 规模 | 能发现什么 |
 |---|---|---|---|
 | ① 静态扫描 | `npm run check:frontend` | 3 个零依赖脚本 | 前端「未声明标识符 / 模板里组件或事件函数没声明 / ref 忘了 .value」——**`vite build` 会放过这些，运行时才炸** |
+| ①b 文档引用扫描 | `npm run check:docs` | 1 个零依赖脚本 | README / docs / CI 里引用的**仓库内文件是否真的存在** + 反向的「磁盘上有、文档没提」。实测抓到过指向 `docs/screenshots/10-移动端390.png` 的失效引用（真实文件是 `15-…`），**渲染出来毫无异样，挂了很久没人发现** <!-- refcheck-ignore --> |
 | ② 接口测试 | `npm test` | **295 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、CSV 转义/公式注入/响应头、会议室时段冲突、统计与考勤的 scope 收敛、缺卡算数、**跨模块数字对账**、**批量审批的部分成功语义**（**看不到界面**） |
 | ③ UI 测试（Playwright） | `npm run test:e2e` | **13 条** | 审批全链路、附件增删、AI 卡片置灰、守卫重定向、移动端无横向溢出（自带自动等待/重试/报告） |
 | ④ 真机断言（自写零依赖 CDP） | `node scripts/oa-ui-check.mjs` | **81 条** | 同一条链路的**交叉验证**，并额外覆盖 **M5 会议室 / M6 统计 / M7 考勤 / M8 批量审批** 的真机行为（G1–G7 七组）+ 页面数字与接口数字的**跨层对账** |
@@ -664,6 +666,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 `.github/workflows/ci.yml`：push / PR 时按顺序跑
 
 1. **静态扫描** `npm run check:frontend`（拦「build 过但运行时 ReferenceError」）
+1b. **文档引用扫描** `npm run check:docs`（拦「文档指向一个不存在的文件」）
 2. **构建前端** `npm run build`（后端要托管 `web/dist`）
 3. **接口测试** `npm test`（295 条）
 4. **UI 测试** `npm run test:e2e`（13 条，用 runner 自带 Chrome；AI 已在配置里置空，不碰外网）
@@ -686,6 +689,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 | **外键不生效** | SQLite 默认不开外键 | 打开连接后 `PRAGMA foreign_keys = ON` |
 | **`vite build` 通过 ≠ 运行时无错** | 引用了未声明标识符只 warning | 前端 commit 前跑 `npm run check:frontend`（三个零依赖静态扫描脚本） |
 | **静态扫描把正则当标识符** | `/^[A-Z]+$/`、`/[T ]/` 里的 `A`/`T` 被报成「未声明的大写标识符」 | 脚本 `strip()` 原来只去注释/字符串，没去**正则字面量**。已在 `check-vue-undef.mjs` 里补上（只在「可能开始正则」的位置剥，避免把 `a / b / c` 的除号也吃掉） |
+| **文档指向一个不存在的文件** | 截图被重命名过，README 的引用没跟着改（`10-移动端390.png` → 实际 `15-…`）。**Markdown 表格里它只是行内代码、不是链接，渲染出来毫无异样**，挂了很久没人发现 | 新增 `npm run check:docs`：把「文档引用的仓库内路径」和「磁盘上的事实」做双向差集，接进 `verify` 与 CI。同类问题是「代码引用写死行号」—— 一并归到 `doc-number-audit` 的审计范围 |
 | **单端口跑起来后 `/` 是 404** | 后端只注册了 `/api/*` 和 `/health`，没托管前端 | `index.js` 里注册 `@fastify/static` 指向 `web/dist`（没构建过就跳过，后端仍可独立当 API 用） |
 | **刷新子路由 404 / API 404 变成 HTML** | SPA history 模式 + 统一 404 互相打架 | `setNotFoundHandler` 分流：`/api/*` 返 JSON 404，其余 GET 交给 `index.html` |
 | **CDP 脚本点不到抽屉里的按钮** | 用 `offsetParent === null` 判「不可见」 | **规范规定 `position: fixed` 元素的 `offsetParent` 就是 `null`**（实测 Chrome 152：明明可点，宽 100）。改用 `getComputedStyle` + `getBoundingClientRect()` |
@@ -746,7 +750,7 @@ if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) re
 ### M6 进度
 
 1. ✅ **统计报表** —— `server/routes/stats.js`（按 `scope=mine/dept/all` 聚合：状态分布 / 类型 / 近 6 月趋势 / 审批时效 / 会议室使用）+ `web/src/views/Stats.vue`（纯 CSS 柱状图、范围 tab 按 `maxScope` 渲染、越界不自己编造数据）+ **11 条接口用例 + 4 条真机断言**。见「关键设计决策」第 11 条
-2. ✅ **顺带倒逼测试平台补能力** —— 统计接口按 `?scope=` 返回不同数据，而平台执行器当时**发不出 query 参数**（而且用例入库时 `query` 字段因为缺列被丢掉）。这一轮补了：执行器 query 拼接 + 持久化层 `query_json` 列 + 归一化函数 + 平台新增 6 条断言（OA-73…78，套件 72→78），`tests/runnerQuery.test.js` 把行为钉死
+2. ✅ **顺带倒逼测试平台补能力** —— 统计接口按 `?scope=` 返回不同数据，而平台执行器当时**发不出 query 参数**（而且用例入库时 `query` 字段因为缺列被丢掉）。这一轮补了：执行器 query 拼接 + 持久化层 `query_json` 列 + 归一化函数 + 平台新增 6 条断言（OA-73…78，套件 72→78），**测试平台侧**的 `tests/runnerQuery.test.js` 把行为钉死
 3. ⭐ **范围权限的落点**：聚合复用既有 `request:read:all`，不新开权限码；越界 **403 不静默降级到 mine**——「员工请求 scope=all 应 403」在平台侧真正跑出来后，才发现执行器把 query 吃了，否则这条断言会永远绿（服务器没收到参数、按 maxScope 回 200）
 
 ### M7 进度
@@ -833,6 +837,7 @@ office-oa/
    ├─ check-vue-undef.mjs       静态扫描：未声明的大写标识符（已修「正则字面量误报」）
    ├─ check-vue-tpl.mjs         静态扫描：模板里未声明的组件/事件函数
    ├─ check-vue-refvalue.mjs    静态扫描：ref 忘了 .value
+   ├─ check-doc-refs.mjs        静态扫描：文档/CI 里引用的仓库内文件是否真的存在（含跨仓白名单）
    ├─ oa-ui-check.mjs           真机浏览器验收：审批全链路 + 越权 + 移动端 + 考勤打卡 + 批量审批（81 断言；失败自动留证）
    ├─ oa-screenshots.mjs        真机截图
    ├─ oa-demo-record.mjs        演示录屏：CDP 抓帧 + 浏览器自编码（零依赖，不需要 ffmpeg）

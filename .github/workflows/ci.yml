@@ -2,6 +2,7 @@ name: CI
 
 # M2：把三层测试接进 CI 做回归
 #   ① 静态扫描（前端未声明标识符等 —— 拦「build 过但运行时 ReferenceError」）
+#   ①b 静态扫描（文档引用 —— README / docs / CI 里引用的文件必须真的存在）
 #   ② 接口测试（vitest，295 条：鉴权 / 权限 / 审批流 / 状态机 / 附件 / AI / 导出 / 会议室 / 统计 / 考勤 / 跨模块对账 / 批量审批）
 #   ③ UI 测试（Playwright，13 条：跑一整条 提交 → 两级审批 → 归档 + 驳回重提）
 #   ④ 真机断言（自写零依赖 CDP 脚本，81 条）
@@ -47,6 +48,12 @@ jobs:
 
       - name: ① 静态扫描（前端）
         run: npm run check:frontend
+
+      - name: ①b 静态扫描（文档引用）—— README / docs / CI 里引用的文件必须真的存在
+        # 便宜且精确（存在就是存在），所以适合当门禁。实测抓到过：
+        # README 截图表指向 docs/screenshots/10-移动端390.png，而磁盘上是 15-…，  # refcheck-ignore
+        # 引用挂很久没人发现 —— 因为 Markdown 表格里它只是行内代码，渲染无异样。
+        run: npm run check:docs
 
       - name: 构建前端产物（后端要托管 web/dist）
         run: npm run build
