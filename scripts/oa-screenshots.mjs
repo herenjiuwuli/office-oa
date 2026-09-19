@@ -193,6 +193,28 @@ try {
   await sleep(400)
   await cdp.shot('01-登录页.png')
 
+  // 1b) 给「批量审批」截图备数据：以申请人身份再提交两张请假单。
+  //     种子数据里王东只有 1 条待办 —— 直接全选会截成「已选 1 条」，
+  //     一张叫「批量审批」的图上写着「已选 1 条」是自相矛盾的。
+  await loginAs(cdp, 'ops02')
+  for (const n of [1, 2]) {
+    await cdp.nav(`${BASE}/requests/new`, `!!document.querySelector('[data-t=title]')`)
+    await cdp.eval(HELPERS)
+    await cdp.eval(`window.__s.click('请假申请')`)
+    await sleep(250)
+    await cdp.eval(`window.__s.set('[data-t=title]', ${JSON.stringify('日常事务请假 ' + n)})`)
+    await cdp.eval(`window.__s.set('[data-field=startDate]', '2026-10-20')`)
+    await cdp.eval(`window.__s.set('[data-field=endDate]', '2026-10-21')`)
+    await cdp.eval(`window.__s.set('[data-field=reason]', '个人事务，工作已安排交接。')`)
+    await sleep(250)
+    await cdp.eval(`window.__s.click('保存并提交')`)
+    await waitFor(cdp, `/^\\/requests\\/\\d+$/.test(location.pathname)`, '提交后跳详情')
+    await sleep(300)
+  }
+  await cdp.eval(`window.__s.click('退出登录')`)
+  await waitFor(cdp, `location.pathname === '/login'`, '退出登录')
+  await sleep(300)
+
   // 2) 以「王东」登录（有 :2 物料单等他签）—— 总览
   await loginAs(cdp, 'ops01')
   await waitFor(cdp, `window.__s.text().includes('待我审批')`, '总览渲染')
@@ -204,6 +226,14 @@ try {
   await cdp.eval(HELPERS)
   await sleep(300)
   await cdp.shot('03-我的待办.png')
+
+  // 3b) 批量审批（M8）：全选露出批量操作栏（多选 + 一次处理一批 + 逐条结果）
+  await cdp.eval(`document.querySelector('table.tbl input[aria-label="全选"]').click()`)
+  await waitFor(cdp, `!!document.querySelector('.batch-bar')`, '批量操作栏出现')
+  await sleep(300)
+  await cdp.shot('03b-批量审批-多选-M8.png')
+  await cdp.eval(`window.__s.click('取消选择')`)
+  await sleep(300)
 
   // 4) 打开处理抽屉（审批动作 + 并发提示）
   await cdp.eval(`window.__s.clickInRow('#2', '处理')`)

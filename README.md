@@ -180,22 +180,27 @@ Vue 3.5 + vue-router + 纯 CSS。**不引 UI 框架、不用 Pinia** —— 共�
 
 ### 界面截图
 
-截图由脚本生成（真机 Chrome 拍，不是手截的）：`node scripts/oa-screenshots.mjs` → `docs/screenshots/`
+截图由脚本生成（真机 Chrome 拍，不是手截的）：`node scripts/oa-screenshots.mjs` → `docs/screenshots/`（共 17 张，下表逐张对应）
 
 | 页面 | 图 |
 |---|---|
 | 登录页（8 个演示账号一键填充） | `docs/screenshots/01-登录页.png` |
 | 总览（身份 + 权限码可视化） | `docs/screenshots/02-总览-身份与权限.png` |
 | 我的待办 | `docs/screenshots/03-我的待办.png` |
+| **批量审批（M8）**：多选 + 共同意见 + 批量同意 / 驳回 | `docs/screenshots/03b-批量审批-多选-M8.png` |
 | 审批抽屉 | `docs/screenshots/04-审批抽屉.png` |
 | 单据详情（**会签时间线**） | `docs/screenshots/05-单据详情-会签时间线.png` |
 | 单据详情（已归档） | `docs/screenshots/06-单据详情-已归档.png` |
 | 部门架构 | `docs/screenshots/07-部门架构.png` |
 | 员工管理（RBAC） | `docs/screenshots/08-员工管理-RBAC.png` |
 | **越权：普通员工访问员工管理 → 后端真实 403** | `docs/screenshots/09-越权-后端真实403.png` |
-| 移动端 390px | `docs/screenshots/10-移动端390.png` |
+| **消息中心（M3）** | `docs/screenshots/11-消息中心-M3.png` |
+| **单据中心（M4）**：导出 CSV | `docs/screenshots/12-单据中心-导出CSV-M4.png` |
+| **会议室（M5）**：占用时间轴 | `docs/screenshots/13-会议室-占用时间轴-M5.png` |
 | **统计看板（M6）**：三个范围 tab + 纯 CSS 柱状图 | `docs/screenshots/13b-统计看板-M6.png` |
 | **考勤打卡（M7）**：当天上班/下班打卡 + 统计数字卡 | `docs/screenshots/13c-考勤打卡-M7.png` |
+| 审计日志 | `docs/screenshots/14-审计日志.png` |
+| 移动端 390px | `docs/screenshots/15-移动端390.png` |
 
 ### 演示录屏
 
