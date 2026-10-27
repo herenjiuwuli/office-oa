@@ -52,7 +52,11 @@ jobs:
 
       - name: 装依赖（根目录 + web 各自一份）
         run: |
-          npm ci
+          # ⚠️ --legacy-peer-deps 不能去掉：npm 10.9.x 解析这棵依赖树时会崩在
+          # arborist 的 "Cannot read properties of null (reading 'edgesOut')"。
+          # 2026-10-27 加了 @vitest/coverage-v8 之后开始复现（本机 npm ci --dry-run 稳定重现），
+          # 而 npm install 会重新解析整棵树、反而看不出问题。
+          npm ci --legacy-peer-deps
           npm --prefix web ci
 
       - name: ① 静态扫描（前端）
