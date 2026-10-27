@@ -7,6 +7,9 @@ name: CI
 #   ③ UI 测试（Playwright，13 条：跑一整条 提交 → 两级审批 → 归档 + 驳回重提）
 #   ④ 真机断言（自写零依赖 CDP 脚本：会议室 / 统计 / 考勤 / 批量审批）
 #   ⑤ 覆盖率（v8，基线锁；2026-10-27 实测 语句 89.53 / 分支 78.64 / 函数 98.95 / 行 93.67）
+#   ⑥ Docker 镜像真机构建 + 起容器跑一遍（独立 job；ubuntu-latest 自带 Docker，不依赖本机）
+#      —— Dockerfile 的坑全在运行期（alpine 没 curl / 容器内绑回环 / prune 删多了），
+#         静态校验一条都抓不到，只能真构建一次。
 #
 # ⭐ 为什么 ⑤ 要单独一层：② 只能说「295 条跑过了」，说不出「测到了多少代码」。
 #    两件事分开看，才不会被「全绿」这个词糊住 —— 同一个项目里就出现过
@@ -120,3 +123,78 @@ jobs:
           path: evidence/
           retention-days: 7
           if-no-files-found: ignore
+
+  # ⑥ Docker 镜像真机构建 + 起容器跑一遍（独立 job）
+  #
+  # 存在的理由：Dockerfile / docker-compose / entrypoint 这三样东西，之前只做过
+  # 「静态校验」（bash -n、确认 ENTRYPOINT 引用的文件存在），**一次都没真构建过**。
+  # 而 Docker 配置的坑全在运行期：alpine 里没有 curl、容器内绑 127.0.0.1 导致
+  # 宿主端口映射连不进来、npm prune 把运行期依赖删了……
+  # 静态校验一条都抓不到 —— 「看起来对」和「真的能起」差得远。
+  #
+  # 不依赖本机装 Docker：ubuntu-latest 自带。以后谁改 Dockerfile，这里会立刻红。
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t office-oa:ci .
+
+      - name: 起容器
+        run: docker run -d --name oa -p 3200:3200 office-oa:ci
+
+      - name: 宿主侧能连上（这条专抓「容器内绑 127.0.0.1」）
+        # 容器里只监听回环时，容器自己 curl 得通、宿主永远连不上，
+        # 现象是「docker ps 显示 Up，浏览器就是打不开」——最容易误判的一种。
+        run: |
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:3200/health >/dev/null 2>&1; then
+              echo "第 $i 秒连上：$(curl -s http://127.0.0.1:3200/health)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "40 秒内宿主连不上 3200"
+          docker logs oa || true
+          exit 1
+
+      - name: 镜像自带的 HEALTHCHECK 要真的变 healthy
+        # Dockerfile 里那条用 node fetch 写的健康检查（alpine 没有 curl），
+        # 写错了不会报错，只会永远 unhealthy —— 必须真看一眼状态。
+        run: |
+          for i in $(seq 1 40); do
+            s=$(docker inspect --format '{{.State.Health.Status}}' oa 2>/dev/null || echo none)
+            echo "第 $i 秒：$s"
+            [ "$s" = "healthy" ] && exit 0
+            sleep 1
+          done
+          docker logs oa || true
+          exit 1
+
+      - name: 用种子账号真登录一次（证明 entrypoint 的 seed 生效）
+        # 密码从 seed.js 里读，不写死 —— 写死的话改一次种子密码这条测试就假红。
+        run: |
+          PW=$(grep -oE "DEFAULT_PASSWORD = '[^']+'" seed.js | head -1 | sed -E "s/.*'(.*)'/\1/")
+          test -n "$PW" || { echo "没从 seed.js 解析到默认密码"; exit 1; }
+          code=$(curl -s -o /tmp/login.json -w '%{http_code}' -X POST http://127.0.0.1:3200/api/auth/login \
+            -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}")
+          echo "HTTP $code"
+          head -c 200 /tmp/login.json; echo
+          test "$code" = "200" || { echo "登录失败，seed 可能没跑起来"; exit 1; }
+
+      - name: 首页能打开（证明 web/dist 进了镜像）
+        run: |
+          curl -fsS http://127.0.0.1:3200/ -o /tmp/index.html
+          grep -o '<title>[^<]*</title>' /tmp/index.html || true
+          grep -q "assets/" /tmp/index.html || { echo "首页没有 assets 引用，前端大概率没构建进镜像"; exit 1; }
+
+      - name: 失败时打容器日志
+        if: failure()
+        run: docker logs oa || true
+
+      - name: 清理
+        if: always()
+        run: docker rm -f oa || true

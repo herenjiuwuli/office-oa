@@ -30,6 +30,9 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3200
+# ⚠️ 必须绑 0.0.0.0：容器内默认只监听 127.0.0.1 的话，宿主的端口映射连不进来
+# （docker-proxy 转发到容器 IP，不是容器回环），表现是「容器在跑但浏览器连不上」。
+ENV HOST=0.0.0.0
 
 COPY --from=build /app /app
 # 只留生产依赖：Playwright / vitest / concurrently 不进镜像

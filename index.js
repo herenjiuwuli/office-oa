@@ -121,6 +121,11 @@ if (isMain) {
   }
 
   const port = Number(process.env.PORT) || 3200
+  // 默认只听回环：本机开发不该把服务意外暴露到局域网。
+  // 但容器和反向代理后面必须显式设 HOST=0.0.0.0 —— 容器内绑 127.0.0.1 时，
+  // 宿主的端口映射（docker-proxy 连的是容器 IP，不是容器回环）根本连不进来，
+  // 表现是「容器在跑、compose 也 up 了，浏览器就是连不上」。
+  const host = process.env.HOST || '127.0.0.1'
   const app = buildApp()
   getDb() // 确保建表（首次运行自动建）
   const hasUser = getDb().prepare(`SELECT COUNT(*) AS n FROM users`).get().n > 0
@@ -131,9 +136,10 @@ if (isMain) {
     console.warn('[office-oa] 没找到 web/dist —— 只提供 API。要看界面请跑 `npm run dev`，或先 `npm run build`。')
   }
   app
-    .listen({ port, host: '127.0.0.1' })
+    .listen({ port, host })
     .then(() => {
-      console.log(`[office-oa] http://127.0.0.1:${port}  (db: ${dbPath()})`)
+      const shown = host === '0.0.0.0' ? 'localhost' : host
+      console.log(`[office-oa] http://${shown}:${port}  (bind ${host}, db: ${dbPath()})`)
     })
     .catch((e) => {
       if (e && e.code === 'EADDRINUSE') {

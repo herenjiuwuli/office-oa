@@ -16,6 +16,15 @@ describe('考勤打卡（M7）', () => {
   let app
   beforeEach(async () => {
     app = await makeApp()
+    // 考勤的唯一约束是 UNIQUE(user_id, date)，而 date 取的是「今天」——
+    // 这组用例**天生不可重复**：同一天跑第二次，第一条「上班打卡」就撞上
+    // 「今天已打过卡」的 409，后面依赖它的三条跟着一起红。
+    // 所以每条用例前面把今天的打卡行清掉，让每条都从「今天什么都没打」开始。
+    // 日期口径必须和服务端 todayStr() 一致（toISOString，UTC），
+    // 否则在 UTC+8 的凌晨时段清的是昨天，清了等于没清。
+    getDb()
+      .prepare('DELETE FROM attendance WHERE date = ?')
+      .run(new Date().toISOString().slice(0, 10))
   })
   afterEach(async () => {
     await app.close()

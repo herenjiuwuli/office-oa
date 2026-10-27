@@ -94,9 +94,15 @@ docker compose down -v           # 连数据一起删，下次启动重新 seed
 - **SQLite 落在 `./data`**，compose 里已挂卷。不挂卷 = 每次重启清库，单据账号考勤全没。
 - **健康检查用 `node -e "fetch(...)"` 而不是 `curl`**：alpine 镜像里没有 curl，
   写成 curl 健康检查会永远 unhealthy（服务其实好好的）。
+- **容器内必须绑 `0.0.0.0`**：`index.js` 默认只听 `127.0.0.1`（本机开发不该把服务暴露到局域网），
+  但容器里绑回环时**宿主的端口映射连不进来**——docker-proxy 转发到的是容器 IP，不是容器回环。
+  现象极具误导性：`docker ps` 显示 Up、容器内 curl 得通，浏览器就是打不开。
+  Dockerfile 里已显式 `ENV HOST=0.0.0.0`，改这块时别把它删了。
 
-> ⚠️ 这两份 Docker 配置写好了但**没有在真机上构建过**（写的时候本机没装 Docker）。
-> 第一次用如果构建失败，先看 `docker compose build` 的输出，别急着改业务代码。
+> ✅ 这份配置**每次提交都会在 CI 里真构建一次**（`docker` job：`docker build` → 起容器 →
+> 宿主侧能连上 → 镜像自带 HEALTHCHECK 变 `healthy` → 用种子账号真登录 → 首页有 assets 引用）。
+> 写 Dockerfile 的坑全在运行期，静态看一眼看不出「能不能起」—— 所以这一步必须真跑。
+> 本机想跑同一条验证：`docker build -t office-oa . && docker run --rm -p 3200:3200 office-oa`。
 
 ### 种子账号
 
