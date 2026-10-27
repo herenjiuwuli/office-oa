@@ -1,0 +1,16 @@
+services:
+  office-oa:
+    build: .
+    image: office-oa:latest
+    container_name: office-oa
+    ports:
+      - "3200:3200"
+    environment:
+      - NODE_ENV=production
+      - PORT=3200
+      # 演示/本地留空即可（AI 摘要会优雅降级成「不可用」，不影响任何主流程）。
+      # 真要用 AI 摘要再填：DEEPSEEK_API_KEY=sk-xxx
+    volumes:
+      # SQLite 落盘：不挂这个卷，重启后单据 / 账号 / 考勤全没
+      - ./data:/app/data
+    restart: unless-stopped

@@ -136,7 +136,11 @@ if (isMain) {
       console.log(`[office-oa] http://127.0.0.1:${port}  (db: ${dbPath()})`)
     })
     .catch((e) => {
-      console.error('[office-oa] 启动失败：', e.message)
+      if (e && e.code === 'EADDRINUSE') {
+        console.error(`[office-oa] 端口 ${port} 已被占用。请先关闭占用进程，或用 \`npm run dev\` 自动清理残留。`)
+      } else {
+        console.error('[office-oa] 启动失败：', e.message)
+      }
       process.exit(1)
     })
 }

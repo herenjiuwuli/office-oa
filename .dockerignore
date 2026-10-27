@@ -1,0 +1,20 @@
+node_modules
+web/node_modules
+web/dist
+data
+.git
+.gitignore
+*.log
+npm-debug.log*
+# 测试与证据不进镜像：E2E 要 Playwright，镜像里不需要
+e2e
+playwright-report
+test-results
+evidence
+tests
+coverage
+# 文档截图动辄几 MB，构建镜像时不需要
+docs
+Dockerfile
+.dockerignore
+docker-compose.yml

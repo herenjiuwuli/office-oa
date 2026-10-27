@@ -6,13 +6,15 @@
   "description": "办公 OA 系统（M1：地基三件套 + 审批流 + 前端）—— 一个专门用来被测试的 OA",
   "scripts": {
     "start": "node index.js",
-    "dev": "concurrently -n be,fe -c green,blue \"node --watch index.js\" \"npm --prefix web run dev\"",
+    "dev": "node scripts/dev-clean.mjs",
+    "dev:raw": "concurrently -n be,fe -c green,blue \"node --watch index.js\" \"npm --prefix web run dev\"",
     "dev:be": "node --watch index.js",
     "dev:fe": "npm --prefix web run dev",
     "seed": "node seed.js",
     "build": "npm --prefix web run build",
     "preview": "npm --prefix web run preview",
     "test": "vitest run",
+    "test:cov": "vitest run --coverage",
     "test:watch": "vitest",
     "check:frontend": "node scripts/check-vue-undef.mjs web/src && node scripts/check-vue-tpl.mjs web/src && node scripts/check-vue-refvalue.mjs web/src/views",
     "check:frontend:undef": "node scripts/check-vue-undef.mjs web/src",
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@vitest/coverage-v8": "^4.1.12",
     "concurrently": "^10.0.4",
     "vitest": "^4.1.11"
   }

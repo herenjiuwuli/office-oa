@@ -35,7 +35,7 @@
 | CI | **GitHub Actions** | 静态扫描 → 构建 → 接口测试 → Playwright UI → **真机 CDP 断言（81 条）**，见 `.github/workflows/ci.yml` |
 | AI（可选） | **DeepSeek**（`server/lib/ai.js`） | 审批摘要。**没配 key 就优雅降级**，不影响任何主流程，详见「AI 审批摘要」一节 |
 | 语言 | 全 JavaScript | 不用 TypeScript（M1 不引入额外复杂度） |
-| 端口 | **3200**（前端 dev 用 5273，E2E 用 3300） | 3001 = api-test-platform，3100 = job-hunter |
+| 端口 | **3200**（前端 dev 用 5273，E2E 用 3300） | 3003 = api-test-platform，3100 = job-hunter |
 
 ---
 
@@ -60,7 +60,7 @@ npm run check:docs                  # ①b 文档引用扫描：README/docs/CI �
 npm run test:e2e                    # ③ Playwright 跑审批链路（13 条，自动起 3300 端口的服务）
 npm run check:ui:auto               # ④ 真机 CDP 断言 81 条（自己起隔离服务：独立库 + 3400 端口，跑完自动收）
 npm run demo                        # ⑤ 演示录屏 → docs/demo/oa-demo.webm（零依赖：本机不需要 ffmpeg）
-npm run verify                      # 本地一条命令复现 CI 全部五层（约 4 分钟）
+npm run verify                      # 本地一条命令复现 CI 前四层（① ①b 构建 ② ③ ④，不含 ⑤ 覆盖率；约 4 分钟）
 ```
 
 > `npm run check:ui` 是 ④ 的裸脚本（要求 `:3200` 已有服务）；
@@ -75,6 +75,28 @@ npm run verify                      # 本地一条命令复现 CI 全部五层�
 ```bash
 node seed.js --force
 ```
+
+### 用 Docker 一键起（可选）
+
+不想装 Node、不想管端口冲突时走这条路：
+
+```bash
+docker compose up -d --build     # → http://localhost:3200
+docker compose logs -f           # 看首次 seed 有没有成功
+docker compose down              # 停（数据留在 ./data）
+docker compose down -v           # 连数据一起删，下次启动重新 seed
+```
+
+三个容易踩的点：
+
+- **首次启动会自动写入演示数据**：`docker-entrypoint.sh` 判断库文件不存在就先跑 `seed.js`。
+  表结构由 `schema.sql` 自动建，但**表里没有账号**时登录页会卡住 —— 这一步省不得。
+- **SQLite 落在 `./data`**，compose 里已挂卷。不挂卷 = 每次重启清库，单据账号考勤全没。
+- **健康检查用 `node -e "fetch(...)"` 而不是 `curl`**：alpine 镜像里没有 curl，
+  写成 curl 健康检查会永远 unhealthy（服务其实好好的）。
+
+> ⚠️ 这两份 Docker 配置写好了但**没有在真机上构建过**（写的时候本机没装 Docker）。
+> 第一次用如果构建失败，先看 `docker compose build` 的输出，别急着改业务代码。
 
 ### 种子账号
 
@@ -400,10 +422,11 @@ JWT 是无状态的，服务端没有会话可销毁 —— 所以「登出」�
 
 ---
 
-## 测试（四层）
+## 测试（五层）
 
 ```bash
-npm run verify     # 一条命令跑完 ①②③ + 构建（本地复现 CI 的前三层）
+npm run verify     # 一条命令跑完 ① ①b → 构建 → ② ③ ④（本地复现 CI 的前四层）
+npm run test:cov   # ②+⑤：跑用例并出覆盖率（CI 里「覆盖率」是独立的第 ⑤ 层，见下表）
 ```
 
 | 层 | 命令 | 规模 | 能发现什么 |
@@ -413,8 +436,9 @@ npm run verify     # 一条命令跑完 ①②③ + 构建（本地复现 CI 的
 | ② 接口测试 | `npm test` | **295 条**（vitest） | 权限、越权、状态机、并发、边界、AI 降级与注入、CSV 转义/公式注入/响应头、会议室时段冲突、统计与考勤的 scope 收敛、缺卡算数、**跨模块数字对账**、**批量审批的部分成功语义**（**看不到界面**） |
 | ③ UI 测试（Playwright） | `npm run test:e2e` | **13 条** | 审批全链路、附件增删、AI 卡片置灰、守卫重定向、移动端无横向溢出（自带自动等待/重试/报告） |
 | ④ 真机断言（自写零依赖 CDP） | `npm run check:ui:auto`（自起隔离服务）/ `node scripts/oa-ui-check.mjs`（需先起服务） | **81 条** | 同一条链路的**交叉验证**，并额外覆盖 **M5 会议室 / M6 统计 / M7 考勤 / M8 批量审批** 的真机行为（G1–G7 七组）+ 页面数字与接口数字的**跨层对账** |
+| ⑤ 覆盖率（基线锁） | `npm run test:cov` | **行 93.7% / 分支 78.6%**（`server/` 1012 行） | 与 ② **刻意分开两层**：② 只证明「用例跑过了」，⑤ 才证明「测到了多少代码」。阈值取实测值向下取整写进 `vitest.config.js`，**作用是「不许偷偷降」，不是假装达标** —— 顺手删测试会让 CI 直接红 |
 
-> ⭐ 这四层**不是重复，是递进**：第 ② 层 295 条全绿的时候，③ 层照样抓出两个真缺陷
+> ⭐ 这几层**不是重复，是递进**：第 ② 层 295 条全绿的时候，③ 层照样抓出两个真缺陷
 > （登录页多出一条侧边栏、归档单据提示「还没轮到你」）；而**截图导览**这一层又抓出两个
 > （Requests.vue 的默认范围与自己的文案不符、考勤「缺卡」把**还没到**的工作日也算成了欠勤）。
 > **测试的层次决定你能看见什么层次的缺陷** —— 最后那个连断言都不会红，纯粹是把页面打开看了一眼才发现的。
