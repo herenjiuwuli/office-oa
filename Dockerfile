@@ -36,7 +36,12 @@ ENV HOST=0.0.0.0
 
 COPY --from=build /app /app
 # 只留生产依赖：Playwright / vitest / concurrently 不进镜像
-RUN npm prune --omit=dev && npm cache clean --force
+# ⚠️ prune 也要 --legacy-peer-deps —— 同一个 npm 10.9.x arborist 崩溃
+# （Cannot read properties of null (reading 'edgesOut')）在**三条独立命令**上都会犯：
+# 本地 npm install、CI 的 npm ci、镜像里的 npm prune。
+# 2026-10-28 CI 的 docker job 第一次跑就红在这行（前两处早修了，这处漏了）——
+# 这正是「Dockerfile 只做静态校验不够」的实证：它构建能过、运行期才炸。
+RUN npm prune --omit=dev --legacy-peer-deps && npm cache clean --force
 
 EXPOSE 3200
 # SQLite 数据库落在这里。⚠️ 不挂卷 = 重启后单据和账号全没
